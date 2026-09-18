@@ -1,0 +1,16 @@
+{
+  "dataset": "SWE-Gym",
+  "revision": "demo-v1",
+  "split": "smoke",
+  "task_count_target": 10,
+  "run": {
+    "max_steps": 12,
+    "max_tool_calls": 32,
+    "max_tokens": 32000,
+    "max_seconds": 900,
+    "max_cost_usd": 5,
+    "candidate_count": 1
+  },
+  "controls": ["unfixed", "gold"],
+  "telemetry": false
+}

@@ -1,0 +1,22 @@
+project: CodeAgentBench
+lock_format: 1
+dataset:
+  name: SWE-Gym
+  source: https://huggingface.co/datasets/SWE-Gym/SWE-Gym
+  revision: bb94ed9e39bbeb96a7fcbfb533b80f25a7fd59cb
+  local_manifest_revision: demo-v1
+evaluation:
+  name: SWE-Bench-Fork-compatible
+  source: REQUIRED_BEFORE_BENCHMARK_RUN
+  revision: REQUIRED_BEFORE_BENCHMARK_RUN
+agent:
+  name: mini-swe-agent
+  version: 0.15.0
+model_baseline:
+  provider: DeepSeek-compatible
+  model: recorded-at-run-time
+  temperature: recorded-at-run-time
+  date: recorded-at-run-time
+runtime:
+  python: ">=3.11"
+  sandbox: local-for-tests; container-required-for-untrusted-benchmark

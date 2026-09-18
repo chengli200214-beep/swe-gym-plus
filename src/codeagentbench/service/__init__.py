@@ -1,0 +1,1 @@
+"""Optional FastAPI task service."""

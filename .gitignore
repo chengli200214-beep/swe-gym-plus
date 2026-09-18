@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+artifacts/runs/*
+artifacts/evaluations/*
+artifacts/*
+artifacts-*/*
+*.sqlite3
+.env
+!.env.example

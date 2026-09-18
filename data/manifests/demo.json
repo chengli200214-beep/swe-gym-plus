@@ -1,0 +1,19 @@
+{
+  "dataset": "SWE-Gym-demo",
+  "revision": "demo-v1",
+  "tasks": [
+    {
+      "instance_id": "demo-calculator",
+      "repo": "examples/demo_repo",
+      "base_commit": "local",
+      "issue": "The add function returns subtraction. Fix it so the focused test passes.",
+      "split": "smoke",
+      "eval_spec": {
+        "test_command": "python -m pytest -q",
+        "fail_to_pass": ["test_adds_numbers"],
+        "gold_patch": "diff --git a/src/calculator.py b/src/calculator.py\nindex deb07bb..6b0557d 100644\n--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,3 +1,3 @@\n def add(left, right):\n     \"\"\"Return the sum of two numbers.\"\"\"\n-    return left - right\n+    return left + right\n"
+      },
+      "metadata": {"context": "The focused test is in tests/test_calculator.py."}
+    }
+  ]
+}

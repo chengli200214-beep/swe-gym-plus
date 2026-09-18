@@ -1,0 +1,16 @@
+[
+  {
+    "command": "python -c \"from pathlib import Path; p=Path('src/calculator.py'); p.write_text(p.read_text().replace('left - right', 'left + right'))\"",
+    "done": false,
+    "message": "Fix the arithmetic implementation."
+  },
+  {
+    "command": "python -m pytest -q",
+    "done": false,
+    "message": "Run the focused test."
+  },
+  {
+    "done": true,
+    "message": "The patch is tested."
+  }
+]
