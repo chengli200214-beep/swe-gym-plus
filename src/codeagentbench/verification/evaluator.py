@@ -33,7 +33,10 @@ class Evaluator:
     def __init__(self, artifact_root: str | Path = "artifacts/evaluations") -> None:
         self.artifact_root = Path(artifact_root)
         self.artifact_root.mkdir(parents=True, exist_ok=True)
-        self.cache_root = self.artifact_root / ".repo_cache"
+        # Reuse the agent/quality cache rooted beside the evaluation artifacts.
+        # Keeping a second cache here forces another network clone for every
+        # evaluator run and makes evaluation fragile when GitHub is unavailable.
+        self.cache_root = self.artifact_root.parent / ".repo_cache"
 
     def evaluate(self, task: TaskRecord, candidate: Candidate, *, timeout_seconds: float = 600.0) -> EvaluationResult:
         spec = task.eval_spec
