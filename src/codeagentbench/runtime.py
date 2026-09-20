@@ -78,106 +78,122 @@ class RuntimeResult:
 
 def parse_action(text: str) -> AgentAction:
     """Parse the JSON action protocol plus narrowly-scoped model formatting repairs."""
-
     candidate = text.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
+    embedded_fence = re.search(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
     had_fence = bool(re.match(r"^\s*```(?:json)?(?:\s|$)", candidate, flags=re.IGNORECASE))
     if fenced:
         candidate = fenced.group(1).strip()
+    elif embedded_fence:
+        # Small models sometimes prepend an explanation before a fenced action.
+        # Parse only the fenced payload; do not mine arbitrary prose for a
+        # command.
+        candidate = embedded_fence.group(1).strip()
+        had_fence = True
     elif had_fence:
         # Keep parsing the JSON body when a model opened a fence but stopped
         # before emitting its closing marker.
         candidate = re.sub(r"^\s*```(?:json)?\s*", "", candidate, count=1, flags=re.IGNORECASE).strip()
+
     try:
         payload = json.loads(candidate)
     except json.JSONDecodeError:
-        dsml_command = _DSML_COMMAND.search(candidate)
-        if dsml_command:
-            command = html.unescape(dsml_command.group(1)).strip()
-            if command:
-                return AgentAction(command=command, message="parsed DeepSeek DSML shell call")
-        # Some DeepSeek-compatible endpoints serialize the tool call with a
-        # bare <command> element instead of a named parameter.
-        dsml_tag_command = _DSML_TAG_COMMAND.search(candidate)
-        if dsml_tag_command:
-            command = html.unescape(dsml_tag_command.group(1)).strip()
-            if command:
-                return AgentAction(command=command, message="parsed DeepSeek DSML command tag")
-        dsml_invoke_command = _DSML_INVOKE_COMMAND.search(candidate)
-        if dsml_invoke_command:
-            command = html.unescape(dsml_invoke_command.group(1)).strip()
-            if command:
-                return AgentAction(command=command, message="parsed DeepSeek DSML invoke command")
-        dsml_inline_command = _DSML_INLINE_COMMAND.search(candidate)
-        if dsml_inline_command:
-            try:
-                command = json.loads(dsml_inline_command.group(1)).strip()
-            except (TypeError, json.JSONDecodeError):
-                command = html.unescape(dsml_inline_command.group(1).strip().strip('"'))
-            if command:
-                return AgentAction(command=command, message="parsed DeepSeek DSML inline command")
-        dsml_plain_parameter = _DSML_PLAIN_PARAMETER_COMMAND.search(candidate)
-        if dsml_plain_parameter:
-            command = html.unescape(dsml_plain_parameter.group(1)).strip()
-            if command:
-                return AgentAction(command=command, message="parsed DeepSeek DSML plain parameter")
-        # Some compatible chat models prepend prose and emit several JSON
-        # candidates. Decode all complete objects without evaluating or
-        # repairing arbitrary text, then use the last action-shaped object;
-        # models commonly put their consolidated command last.
-        decoder = json.JSONDecoder()
         payload = None
-        action_candidates: list[dict[str, object]] = []
-        for index, character in enumerate(candidate):
-            if character != "{":
-                continue
+        if had_fence and "\\'" in candidate:
+            # JSON does not use backslash-single-quote escapes, but models
+            # frequently copy shell quoting into a JSON string. This narrow
+            # repair is safe because a single quote has no special meaning in
+            # a JSON string.
             try:
-                parsed, _ = decoder.raw_decode(candidate[index:])
+                payload = json.loads(candidate.replace("\\'", "'"))
             except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict) and ("command" in parsed or "done" in parsed):
-                action_candidates.append(parsed)
-        if action_candidates:
-            # Some models emit an entire imagined tool transcript in one
-            # assistant message and end it with done=true. Those commands
-            # have not been executed, so never accept the synthetic final
-            # completion. Start with the first concrete action and let the
-            # runtime observe each real receipt before asking for the next.
-            if len(action_candidates) >= 3:
-                payload = action_candidates[0]
-            else:
-                payload = action_candidates[-1]
+                payload = None
+
         if payload is None:
-            # A frequent model formatting error is an unescaped quote inside
-            # the command itself, for example findstr /c:"launch_template".
-            # Repair only the explicitly-shaped action envelope; do not try to
-            # evaluate or broadly rewrite arbitrary model prose.
-            malformed = _MALFORMED_ACTION.match(candidate)
-            if malformed:
-                command = malformed.group("command").replace("\\\\", "\\").replace('\\"', '"')
-                message = malformed.group("message") or ""
-                return AgentAction(
-                    command=command.strip(),
-                    done=malformed.group("done").lower() == "true",
-                    message=message,
-                )
-            # Small local models occasionally start an explicit JSON/fenced
-            # action and stop before emitting the closing quote/braces.  Only
-            # repair this shape when the response itself starts with the
-            # action envelope; never mine an arbitrary prose response for a
-            # command.  The shell receipt will expose any genuinely truncated
-            # command to the next model turn.
-            truncated = _TRUNCATED_COMMAND_ACTION.match(candidate)
-            if truncated and (had_fence or candidate.lstrip().startswith('{')):
-                command = truncated.group("command").strip()
-                if command.endswith("```"):
-                    command = command[:-3].rstrip()
-                if command.endswith('"'):
-                    command = command[:-1]
-                command = command.replace("\\\\", "\\").replace('\\"', '"').strip()
+            dsml_command = _DSML_COMMAND.search(candidate)
+            if dsml_command:
+                command = html.unescape(dsml_command.group(1)).strip()
                 if command:
-                    return AgentAction(command=command, message="parsed truncated JSON command")
-            raise ValueError("model response is not valid JSON") from None
+                    return AgentAction(command=command, message="parsed DeepSeek DSML shell call")
+            # Some DeepSeek-compatible endpoints serialize the tool call with a
+            # bare <command> element instead of a named parameter.
+            dsml_tag_command = _DSML_TAG_COMMAND.search(candidate)
+            if dsml_tag_command:
+                command = html.unescape(dsml_tag_command.group(1)).strip()
+                if command:
+                    return AgentAction(command=command, message="parsed DeepSeek DSML command tag")
+            dsml_invoke_command = _DSML_INVOKE_COMMAND.search(candidate)
+            if dsml_invoke_command:
+                command = html.unescape(dsml_invoke_command.group(1)).strip()
+                if command:
+                    return AgentAction(command=command, message="parsed DeepSeek DSML invoke command")
+            dsml_inline_command = _DSML_INLINE_COMMAND.search(candidate)
+            if dsml_inline_command:
+                try:
+                    command = json.loads(dsml_inline_command.group(1)).strip()
+                except (TypeError, json.JSONDecodeError):
+                    command = html.unescape(dsml_inline_command.group(1).strip().strip('"'))
+                if command:
+                    return AgentAction(command=command, message="parsed DeepSeek DSML inline command")
+            dsml_plain_parameter = _DSML_PLAIN_PARAMETER_COMMAND.search(candidate)
+            if dsml_plain_parameter:
+                command = html.unescape(dsml_plain_parameter.group(1)).strip()
+                if command:
+                    return AgentAction(command=command, message="parsed DeepSeek DSML plain parameter")
+
+            # Some compatible chat models prepend prose and emit several JSON
+            # candidates. Decode all complete objects without evaluating or
+            # repairing arbitrary text, then use the last action-shaped object;
+            # models commonly put their consolidated command last.
+            decoder = json.JSONDecoder()
+            action_candidates: list[dict[str, object]] = []
+            for index, character in enumerate(candidate):
+                if character != "{":
+                    continue
+                try:
+                    parsed, _ = decoder.raw_decode(candidate[index:])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict) and ("command" in parsed or "done" in parsed):
+                    action_candidates.append(parsed)
+            if action_candidates:
+                # Some models emit an entire imagined tool transcript in one
+                # assistant message and end it with done=true. Those commands
+                # have not been executed, so never accept the synthetic final
+                # completion. Start with the first concrete action and let the
+                # runtime observe each real receipt before asking for the next.
+                payload = action_candidates[0] if len(action_candidates) >= 3 else action_candidates[-1]
+
+            if payload is None:
+                # A frequent model formatting error is an unescaped quote inside
+                # the command itself, for example findstr /c:"launch_template".
+                # Repair only the explicitly-shaped action envelope; do not try
+                # to evaluate or broadly rewrite arbitrary model prose.
+                malformed = _MALFORMED_ACTION.match(candidate)
+                if malformed:
+                    command = malformed.group("command").replace("\\\\", "\\").replace('\\"', '"')
+                    message = malformed.group("message") or ""
+                    return AgentAction(
+                        command=command.strip(),
+                        done=malformed.group("done").lower() == "true",
+                        message=message,
+                    )
+                # Small local models occasionally start an explicit JSON/fenced
+                # action and stop before emitting the closing quote/braces. Only
+                # repair this shape when the response itself starts with the
+                # action envelope; never mine an arbitrary prose response for a
+                # command.
+                truncated = _TRUNCATED_COMMAND_ACTION.match(candidate)
+                if truncated and (had_fence or candidate.lstrip().startswith('{')):
+                    command = truncated.group("command").strip()
+                    if command.endswith("```"):
+                        command = command[:-3].rstrip()
+                    if command.endswith('"'):
+                        command = command[:-1]
+                    command = command.replace("\\\\", "\\").replace('\\"', '"').strip()
+                    if command:
+                        return AgentAction(command=command, message="parsed truncated JSON command")
+                raise ValueError("model response is not valid JSON") from None
     if not isinstance(payload, dict):
         raise ValueError("model action must be a JSON object")
     done = bool(payload.get("done", False))
@@ -269,9 +285,30 @@ class AgentRuntime:
                     )
                 observation = {"exit_code": receipt.exit_code, "stdout": receipt.stdout, "stderr": receipt.stderr, "timed_out": receipt.timed_out}
                 messages.append({"role": "user", "content": "Tool result:\n" + json.dumps(observation, ensure_ascii=False)})
+                if receipt.exit_code != 0:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Harness warning: the previous shell command failed. Do not repeat the identical command. "
+                                "Inspect the exact file/line and use a short Python edit script or another safer command, "
+                                "then verify the diff before testing."
+                            ),
+                        }
+                    )
                 signature = hashlib.sha256(f"{action.command}\0{pre_digest}\0{receipt.exit_code}\0{receipt.stdout}\0{receipt.stderr}".encode("utf-8")).hexdigest()
                 repeated = repeated + 1 if signature == previous_signature else 0
                 previous_signature = signature
+                if repeated == 1:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Harness warning: this action produced the same command, workspace state, and result twice. "
+                                "Choose a different command now; do not retry the same shell expression."
+                            ),
+                        }
+                    )
                 if repeated >= 2:
                     state.status, state.failure_reason = "failed", "no progress: identical command, workspace and result repeated"
                     self.artifact_store.append_event(run_id, {"type": "no_progress", "action_id": action_id})

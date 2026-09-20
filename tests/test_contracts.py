@@ -50,6 +50,17 @@ def test_parse_action_repairs_explicit_truncated_fenced_command() -> None:
     assert "truncated" in action.message
 
 
+def test_parse_action_repairs_prose_and_shell_single_quote_escape() -> None:
+    action = parse_action(
+        "The previous edit failed; I will retry.\n"
+        "```json\n"
+        "{\"command\": \"sed -i 's/return \\\'old\\\'/return \\\'new\\\'/g' file.py\", \"done\": false}\n"
+        "```"
+    )
+    assert action.command == "sed -i 's/return 'old'/return 'new'/g' file.py"
+    assert action.done is False
+
+
 def test_parse_deepseek_dsml_shell_call() -> None:
     action = parse_action(
         '<｜｜DSML｜｜ calls>\n'
