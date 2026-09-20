@@ -199,10 +199,10 @@ def encode_example(tokenizer: Any, messages: list[dict[str, str]], max_seq_len: 
     Only assistant spans receive a label; every other span is masked with
     ``IGNORE_INDEX`` so tool output is context but never a target.
 
-    The sequence is truncated from the right, which keeps the issue statement and
-    the earliest context. A long opening tool output can therefore push every
-    assistant turn past the window; such an example is dropped (returns ``None``)
-    rather than trained with no supervision. Callers report the drop count.
+    Long trajectories are compressed by keeping both the opening context and the
+    final action/test turns. Right-only truncation teaches exploration while
+    silently removing the patch and test actions that matter most for coding
+    agents.
     """
 
     def render(conversation: list[dict[str, str]]) -> str:
@@ -230,8 +230,14 @@ def encode_example(tokenizer: Any, messages: list[dict[str, str]], max_seq_len: 
         input_ids.extend(delta)
         labels.extend(delta if message["role"] == "assistant" else [IGNORE_INDEX] * len(delta))
 
-    input_ids = input_ids[:max_seq_len]
-    labels = labels[:max_seq_len]
+    if len(input_ids) > max_seq_len:
+        # Keep the issue/system context and the tail where the patch and tests
+        # usually occur. The two halves are selected together so labels remain
+        # aligned with their input tokens.
+        head_len = min(512, max_seq_len // 2)
+        tail_len = max_seq_len - head_len
+        input_ids = input_ids[:head_len] + input_ids[-tail_len:]
+        labels = labels[:head_len] + labels[-tail_len:]
     if not any(label != IGNORE_INDEX for label in labels):
         return None
     return {"input_ids": input_ids, "labels": labels}

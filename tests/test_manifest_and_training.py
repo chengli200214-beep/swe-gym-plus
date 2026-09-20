@@ -6,6 +6,7 @@ from codeagentbench.tasks.manifest import grouped_split, load_manifest
 from codeagentbench.tasks.quality import run_controls
 from codeagentbench.training.reward import formal_reward
 from codeagentbench.training.sft import trajectory_to_sft
+from codeagentbench.train_sft import encode_example
 
 
 def test_swe_gym_row_mapping_and_grouped_split() -> None:
@@ -63,6 +64,25 @@ def test_sft_preserves_interaction_roles_and_reward_is_binary() -> None:
     assert [message["role"] for message in record["messages"]] == ["user", "assistant", "tool"]
     assert formal_reward(EvaluationResult(Verdict.PASSED, 0, True, True)) == 1.0
     assert formal_reward(EvaluationResult(Verdict.FAILED, 1, False, False)) == 0.0
+
+
+def test_sft_truncation_keeps_final_supervised_turn() -> None:
+    class TinyTokenizer:
+        def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False):
+            return "|".join(f"{m['role']}:{m['content']}" for m in messages)
+
+        def __call__(self, text, add_special_tokens=False):
+            return {"input_ids": list(range(len(text)))}
+
+    messages = [
+        {"role": "user", "content": "issue"},
+        {"role": "assistant", "content": "early"},
+        {"role": "tool", "content": "x" * 40},
+        {"role": "assistant", "content": "final patch action"},
+    ]
+    encoded = encode_example(TinyTokenizer(), messages, max_seq_len=32)
+    assert encoded is not None
+    assert any(label != -100 for label in encoded["labels"][-16:])
 
 
 def test_quality_controls_admit_demo_task() -> None:
