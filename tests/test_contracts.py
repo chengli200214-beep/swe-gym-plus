@@ -43,6 +43,13 @@ def test_parse_action_repairs_unescaped_quotes_inside_command() -> None:
     assert action.done is False
 
 
+def test_parse_action_repairs_explicit_truncated_fenced_command() -> None:
+    action = parse_action('```json\n{"command": "printf \'hello\\n\'')
+    assert action.command == "printf 'hello\\n'"
+    assert action.done is False
+    assert "truncated" in action.message
+
+
 def test_parse_deepseek_dsml_shell_call() -> None:
     action = parse_action(
         '<｜｜DSML｜｜ calls>\n'

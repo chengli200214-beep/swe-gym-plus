@@ -59,6 +59,10 @@ _MALFORMED_ACTION = re.compile(
     r'''(?:\s*,\s*["']message["']\s*:\s*["'](?P<message>.*?)["'])?\s*\}\s*$''',
     flags=re.DOTALL | re.IGNORECASE,
 )
+_TRUNCATED_COMMAND_ACTION = re.compile(
+    r'''^\s*\{\s*["']command["']\s*:\s*["'](?P<command>.*)$''',
+    flags=re.DOTALL | re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -73,12 +77,17 @@ class RuntimeResult:
 
 
 def parse_action(text: str) -> AgentAction:
-    """Parse only the strict JSON protocol; invalid responses are rejected."""
+    """Parse the JSON action protocol plus narrowly-scoped model formatting repairs."""
 
     candidate = text.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
+    had_fence = bool(re.match(r"^\s*```(?:json)?(?:\s|$)", candidate, flags=re.IGNORECASE))
     if fenced:
         candidate = fenced.group(1).strip()
+    elif had_fence:
+        # Keep parsing the JSON body when a model opened a fence but stopped
+        # before emitting its closing marker.
+        candidate = re.sub(r"^\s*```(?:json)?\s*", "", candidate, count=1, flags=re.IGNORECASE).strip()
     try:
         payload = json.loads(candidate)
     except json.JSONDecodeError:
@@ -152,6 +161,22 @@ def parse_action(text: str) -> AgentAction:
                     done=malformed.group("done").lower() == "true",
                     message=message,
                 )
+            # Small local models occasionally start an explicit JSON/fenced
+            # action and stop before emitting the closing quote/braces.  Only
+            # repair this shape when the response itself starts with the
+            # action envelope; never mine an arbitrary prose response for a
+            # command.  The shell receipt will expose any genuinely truncated
+            # command to the next model turn.
+            truncated = _TRUNCATED_COMMAND_ACTION.match(candidate)
+            if truncated and (had_fence or candidate.lstrip().startswith('{')):
+                command = truncated.group("command").strip()
+                if command.endswith("```"):
+                    command = command[:-3].rstrip()
+                if command.endswith('"'):
+                    command = command[:-1]
+                command = command.replace("\\\\", "\\").replace('\\"', '"').strip()
+                if command:
+                    return AgentAction(command=command, message="parsed truncated JSON command")
             raise ValueError("model response is not valid JSON") from None
     if not isinstance(payload, dict):
         raise ValueError("model action must be a JSON object")
