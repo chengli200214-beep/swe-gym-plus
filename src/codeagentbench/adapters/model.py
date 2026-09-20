@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -49,12 +50,29 @@ class DeepSeekModel:
             import httpx
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise RuntimeError("DeepSeek adapter requires `pip install codeagentbench[api]`") from exc
-        response = httpx.post(
-            f"{self.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json={"model": self.model, "messages": messages, "temperature": temperature},
-            timeout=120.0,
-        )
+        request = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        response = None
+        for attempt in range(4):
+            try:
+                response = httpx.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json=request,
+                    timeout=120.0,
+                )
+            except httpx.RequestError:
+                if attempt == 3:
+                    raise
+                time.sleep(2**attempt)
+                continue
+            if response.status_code not in {429, 500, 502, 503, 504} or attempt == 3:
+                break
+            time.sleep(2**attempt)
+        assert response is not None
         response.raise_for_status()
         payload = response.json()
         usage = payload.get("usage", {})
