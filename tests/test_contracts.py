@@ -61,6 +61,16 @@ def test_parse_action_repairs_prose_and_shell_single_quote_escape() -> None:
     assert action.done is False
 
 
+def test_parse_action_extracts_labeled_edit_command() -> None:
+    action = parse_action(
+        "The JSON action was malformed.\n"
+        "**Edit Command:**\n"
+        "```bash\npython -c \"print('repair')\"\n```\n"
+        "**Test Command:**\n```bash\npython -m pytest -q\n```"
+    )
+    assert action.command == "python -c \"print('repair')\""
+
+
 def test_parse_deepseek_dsml_shell_call() -> None:
     action = parse_action(
         '<｜｜DSML｜｜ calls>\n'

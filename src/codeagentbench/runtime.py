@@ -63,6 +63,10 @@ _TRUNCATED_COMMAND_ACTION = re.compile(
     r'''^\s*\{\s*["']command["']\s*:\s*["'](?P<command>.*)$''',
     flags=re.DOTALL | re.IGNORECASE,
 )
+_EDIT_COMMAND_FENCE = re.compile(
+    r"(?:\*\*)?edit\s+command[\s*]*:[\s*]*```(?:bash|sh|shell)?\s*(.*?)\s*```",
+    flags=re.DOTALL | re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,7 @@ class RuntimeResult:
 def parse_action(text: str) -> AgentAction:
     """Parse the JSON action protocol plus narrowly-scoped model formatting repairs."""
     candidate = text.strip()
+    original_candidate = candidate
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
     embedded_fence = re.search(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
     had_fence = bool(re.match(r"^\s*```(?:json)?(?:\s|$)", candidate, flags=re.IGNORECASE))
@@ -110,6 +115,11 @@ def parse_action(text: str) -> AgentAction:
                 payload = None
 
         if payload is None:
+            edit_command = _EDIT_COMMAND_FENCE.search(original_candidate)
+            if edit_command:
+                command = edit_command.group(1).strip()
+                if command:
+                    return AgentAction(command=command, message="parsed labeled edit command")
             dsml_command = _DSML_COMMAND.search(candidate)
             if dsml_command:
                 command = html.unescape(dsml_command.group(1)).strip()
