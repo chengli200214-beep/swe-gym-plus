@@ -10,11 +10,34 @@ from codeagentbench.training.sft import trajectory_to_sft
 
 def test_swe_gym_row_mapping_and_grouped_split() -> None:
     rows = [
-        normalize_swe_gym_row({"instance_id": "a", "repo": "r", "base_commit": "1", "problem_statement": "a", "patch": "gold", "test_patch": "test"}, split="train"),
-        normalize_swe_gym_row({"instance_id": "b", "repo": "r", "base_commit": "1", "problem_statement": "b", "patch": "gold2", "test_patch": "test2"}, split="train"),
+        normalize_swe_gym_row({"instance_id": "a", "repo": "r", "base_commit": "1", "problem_statement": "a", "patch": "gold", "test_patch": "test", "group_id": "pr-1"}, split="train"),
+        normalize_swe_gym_row({"instance_id": "b", "repo": "r", "base_commit": "1", "problem_statement": "b", "patch": "gold2", "test_patch": "test2", "group_id": "pr-1"}, split="train"),
     ]
     assigned = grouped_split(rows, smoke=1, dev=0, evaluation=0)
     assert {task.split for task in assigned} == {"train"}
+
+
+def test_tasks_without_group_id_split_independently() -> None:
+    rows = [
+        normalize_swe_gym_row(
+            {
+                "instance_id": name,
+                "repo": "r",
+                "base_commit": "1",
+                "problem_statement": name,
+                "patch": "gold",
+                "test_patch": "test",
+            },
+            split="train",
+        )
+        for name in ("a", "b", "c")
+    ]
+
+    assigned = grouped_split(rows, smoke=1, dev=1, evaluation=1)
+
+    assert [task.split for task in assigned].count("smoke") == 1
+    assert [task.split for task in assigned].count("dev") == 1
+    assert [task.split for task in assigned].count("eval") == 1
     assert rows[0].agent_view().issue == "a"
 
 

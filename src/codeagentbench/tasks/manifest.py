@@ -108,12 +108,19 @@ def grouped_split(
     dev: int = 30,
     evaluation: int = 50,
 ) -> list[TaskRecord]:
-    """Assign deterministic splits while keeping a repository/PR group together."""
+    """Assign deterministic splits while keeping explicit groups together.
+
+    SWE-Gym rows often omit ``group_id``. In that case, treating the whole
+    repository as one group can put every task from a repository into the
+    fallback ``train`` split. Use the instance id as the deterministic
+    fallback so task-level splits remain usable; explicit PR/group ids still
+    stay together to prevent leakage.
+    """
 
     items = list(tasks)
     groups: dict[str, list[TaskRecord]] = {}
     for task in items:
-        key = task.group_id or task.repo
+        key = task.group_id or f"{task.repo}:{task.instance_id}"
         groups.setdefault(key, []).append(task)
     ordered = sorted(
         groups.items(),
