@@ -128,13 +128,8 @@ def test_encode_example_truncates_to_max_sequence_length() -> None:
     assert any(label != IGNORE for label in example["labels"])
 
 
-def test_long_opening_tool_output_drops_the_example_instead_of_training_unsupervised() -> None:
-    """Right-truncation keeps the issue and early context.
-
-    When the opening turn is long enough to fill the whole window, no assistant
-    span survives, so the example is dropped rather than trained with an
-    all-masked label set.
-    """
+def test_long_opening_turn_keeps_a_supervised_tail() -> None:
+    """Head+tail truncation keeps final assistant actions trainable."""
 
     tokenizer = StubTokenizer()
     messages = [
@@ -144,7 +139,9 @@ def test_long_opening_tool_output_drops_the_example_instead_of_training_unsuperv
 
     example = train_sft.encode_example(tokenizer, messages, max_seq_len=32)
 
-    assert example is None
+    assert example is not None
+    assert len(example["input_ids"]) == 32
+    assert any(label != IGNORE for label in example["labels"])
 
 
 def test_collator_pads_inputs_and_masks_padding_from_the_loss() -> None:
