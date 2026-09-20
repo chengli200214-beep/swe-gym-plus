@@ -361,6 +361,8 @@ def _build_model_and_tokenizer(config: SFTConfig, torch: Any) -> tuple[Any, Any]
 
 
 def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, records: list[dict[str, Any]]) -> dict[str, Any]:
+    import inspect
+
     from transformers import Trainer, TrainingArguments
 
     model, tokenizer = _build_model_and_tokenizer(config, torch)
@@ -385,26 +387,33 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
             "check that export-sft produced assistant messages"
         )
 
-    arguments = TrainingArguments(
-        output_dir=str(config.output_dir),
-        per_device_train_batch_size=config.per_device_batch_size,
-        gradient_accumulation_steps=grad_accum,
-        num_train_epochs=config.epochs,
-        learning_rate=config.learning_rate,
-        lr_scheduler_type="cosine",
-        warmup_ratio=0.03,
-        max_grad_norm=0.3,
-        logging_steps=config.logging_steps,
-        save_strategy="epoch",
-        save_total_limit=config.save_total_limit,
-        seed=config.seed,
-        data_seed=config.seed,
-        bf16=True,
-        gradient_checkpointing=config.gradient_checkpointing,
-        optim=config.optim,
-        report_to=[],
-        remove_unused_columns=False,
-    )
+    training_kwargs = {
+        "output_dir": str(config.output_dir),
+        "per_device_train_batch_size": config.per_device_batch_size,
+        "gradient_accumulation_steps": grad_accum,
+        "num_train_epochs": config.epochs,
+        "learning_rate": config.learning_rate,
+        "lr_scheduler_type": "cosine",
+        "max_grad_norm": 0.3,
+        "logging_steps": config.logging_steps,
+        "save_strategy": "epoch",
+        "save_total_limit": config.save_total_limit,
+        "seed": config.seed,
+        "data_seed": config.seed,
+        "bf16": True,
+        "gradient_checkpointing": config.gradient_checkpointing,
+        "optim": config.optim,
+        "report_to": [],
+        "remove_unused_columns": False,
+    }
+    # Transformers 5.x removed ``warmup_ratio`` from TrainingArguments. Keep
+    # the intended warmup on older releases and use the compatible zero-step
+    # fallback on the current server image.
+    if "warmup_ratio" in inspect.signature(TrainingArguments).parameters:
+        training_kwargs["warmup_ratio"] = 0.03
+    else:
+        training_kwargs["warmup_steps"] = 0
+    arguments = TrainingArguments(**training_kwargs)
     trainer = Trainer(
         model=model,
         args=arguments,
