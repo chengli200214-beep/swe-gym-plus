@@ -1,5 +1,5 @@
 """Adapters for models and upstream agent implementations."""
 
-from .model import DeepSeekModel, ModelResponse, ScriptedModel
+from .model import DeepSeekModel, LocalHFModel, ModelResponse, ScriptedModel
 
-__all__ = ["DeepSeekModel", "ModelResponse", "ScriptedModel"]
+__all__ = ["DeepSeekModel", "LocalHFModel", "ModelResponse", "ScriptedModel"]

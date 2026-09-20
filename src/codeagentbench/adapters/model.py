@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -33,6 +34,89 @@ class ScriptedModel:
             return ModelResponse(json.dumps({"done": True, "message": "script exhausted"}))
         response = self.responses.pop(0)
         return ModelResponse(json.dumps(response) if isinstance(response, dict) else response, completion_tokens=32)
+
+
+class LocalHFModel:
+    """Local Transformers model for offline base-vs-adapter comparisons."""
+
+    def __init__(
+        self,
+        model_path: str | Path,
+        *,
+        base_model_path: str | Path | None = None,
+        max_new_tokens: int = 512,
+        local_files_only: bool = True,
+    ) -> None:
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("LocalHFModel requires the training dependencies") from exc
+
+        model_path = str(model_path)
+        self.model_path = model_path
+        self.max_new_tokens = max_new_tokens
+        self._torch = torch
+        load_kwargs = {
+            "device_map": "auto",
+            "torch_dtype": torch.bfloat16,
+            "trust_remote_code": True,
+            "local_files_only": local_files_only,
+        }
+        adapter_config = Path(model_path) / "adapter_config.json"
+        if adapter_config.exists():
+            try:
+                from peft import PeftModel
+            except ImportError as exc:  # pragma: no cover - optional dependency
+                raise RuntimeError("LocalHFModel with a LoRA checkpoint requires peft") from exc
+            config = json.loads(adapter_config.read_text(encoding="utf-8"))
+            base_path = str(base_model_path or config.get("base_model_name_or_path", ""))
+            if not base_path:
+                raise ValueError("LoRA checkpoint does not declare a base model")
+            base = AutoModelForCausalLM.from_pretrained(base_path, **load_kwargs)
+            self._model = PeftModel.from_pretrained(
+                base,
+                model_path,
+                is_trainable=False,
+                local_files_only=local_files_only,
+            )
+        else:
+            self._model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs)
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            local_files_only=local_files_only,
+        )
+        self._model.eval()
+
+    def complete(self, messages: list[dict[str, str]], *, temperature: float = 0.0) -> ModelResponse:
+        inputs = self._tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_tensors="pt",
+        )
+        device = next(self._model.parameters()).device
+        inputs = {key: value.to(device) for key, value in inputs.items()}
+        generation_kwargs = {
+            "max_new_tokens": self.max_new_tokens,
+            "do_sample": temperature > 0,
+            "pad_token_id": self._tokenizer.pad_token_id or self._tokenizer.eos_token_id,
+        }
+        if temperature > 0:
+            generation_kwargs["temperature"] = temperature
+        with self._torch.inference_mode():
+            output = self._model.generate(
+                **inputs,
+                **generation_kwargs,
+            )
+        generated = output[0, inputs["input_ids"].shape[-1] :]
+        text = self._tokenizer.decode(generated, skip_special_tokens=True).strip()
+        return ModelResponse(
+            text=text,
+            prompt_tokens=int(inputs["input_ids"].shape[-1]),
+            completion_tokens=int(generated.shape[-1]),
+        )
 
 
 class DeepSeekModel:

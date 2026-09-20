@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from codeagentbench.adapters.model import DeepSeekModel, ScriptedModel
+from codeagentbench.adapters.model import DeepSeekModel, LocalHFModel, ScriptedModel
 from codeagentbench.models import Candidate, RunConfig
 from codeagentbench.sandbox.workspace import WorkspaceManager
 from codeagentbench.storage.artifacts import ArtifactStore
@@ -30,6 +30,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("task_id")
     run.add_argument("--repo-root", type=Path, default=Path("artifacts"))
     run.add_argument("--script", type=Path)
+    run.add_argument("--model-backend", choices=("deepseek", "local"), default="deepseek")
+    run.add_argument("--model-path", type=Path)
+    run.add_argument("--base-model-path", type=Path)
+    run.add_argument("--max-new-tokens", type=int, default=512)
     run.add_argument("--run-id")
     run.add_argument("--max-steps", type=int, default=8)
     run.add_argument("--max-tool-calls", type=int, default=16)
@@ -79,7 +83,19 @@ def main(argv: list[str] | None = None) -> int:
     if task is None:
         print(f"unknown task: {args.task_id}", file=sys.stderr)
         return 2
-    model = ScriptedModel(json.loads(args.script.read_text(encoding="utf-8"))) if args.script else DeepSeekModel()
+    if args.script:
+        model = ScriptedModel(json.loads(args.script.read_text(encoding="utf-8")))
+    elif args.model_backend == "local":
+        if not args.model_path:
+            print("--model-path is required with --model-backend local", file=sys.stderr)
+            return 2
+        model = LocalHFModel(
+            args.model_path,
+            base_model_path=args.base_model_path,
+            max_new_tokens=args.max_new_tokens,
+        )
+    else:
+        model = DeepSeekModel()
     store = ArtifactStore(args.repo_root)
     run_id = args.run_id or f"{task.instance_id}-{int(time.time())}"
     workspace = WorkspaceManager(args.repo_root).create(task, run_id)
