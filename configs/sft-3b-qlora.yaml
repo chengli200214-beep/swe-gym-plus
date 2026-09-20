@@ -1,0 +1,27 @@
+# Server-side QLoRA configuration.
+# Training data is generated under experiments/sft-v0 before this is run.
+base_model: Qwen/Qwen2.5-Coder-3B-Instruct
+train_file: ../experiments/sft-v0/data/sft/train.jsonl
+eval_file: null
+output_dir: ../experiments/sft-v0/checkpoints/qwen2.5-coder-3b-qlora
+max_seq_len: 2048
+epochs: 1
+seed: 42
+learning_rate: 0.0002
+per_device_batch_size: 1
+gradient_accumulation_steps: 8
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+load_in_4bit: true
+bnb_quant_type: nf4
+bnb_double_quant: true
+gradient_checkpointing: true
+optim: paged_adamw_8bit
+logging_steps: 1
+save_total_limit: 3
+oom_ladder:
+  - max_seq_len: 2048
+    gradient_accumulation_steps: 8
+  - max_seq_len: 1024
+    gradient_accumulation_steps: 16
