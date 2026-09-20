@@ -358,6 +358,8 @@ class AgentRuntime:
         return (
             "You are a coding agent. Inspect and modify the repository with the available shell. "
             f"{shell_note} "
+            "The harness has already prepared this workspace from the requested base commit; do not run "
+            "git checkout, git fetch, git reset, or otherwise switch revisions before inspecting the files. "
             'Return exactly JSON: {"command":"...", "done":false, "message":"..."}. '
             "Set done=true only after testing. Do not reveal or ask for gold patches. "
             "Use a short observe-edit-test loop: after at most 3 exploration commands, "
