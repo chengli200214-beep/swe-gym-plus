@@ -317,17 +317,22 @@ class AgentRuntime:
 
     @staticmethod
     def _system_prompt() -> str:
-        shell_note = (
-            "The workspace uses Windows cmd.exe: you are already in the repository root; "
-            "do not cd to /repo. Use dir, type, findstr, python and git with Windows paths."
-            if os.name == "nt"
-            else "The workspace uses bash and you are already in the repository root."
-        )
+        if os.name == "nt":
+            shell_note = (
+                "The workspace uses Windows cmd.exe: you are already in the repository root; "
+                "do not cd to /repo. Use dir, type, findstr, python and git with Windows paths. "
+                "Do not use Unix-only commands or paths such as tail, grep, sed, /repo, "
+                "or bash pipelines."
+            )
+        else:
+            shell_note = (
+                "The workspace uses Linux bash: you are already in the repository root. "
+                "Use pwd, ls, find, grep, sed, awk, python and git as needed. "
+                "Do not use Windows-only commands such as dir, type, findstr, or PowerShell syntax."
+            )
         return (
             "You are a coding agent. Inspect and modify the repository with the available shell. "
             f"{shell_note} "
-            "On Windows, never use Unix-only commands or paths such as tail, grep, sed, /repo, "
-            "or bash pipelines; use type, findstr, python, and PowerShell/cmd-compatible syntax. "
             'Return exactly JSON: {"command":"...", "done":false, "message":"..."}. '
             "Set done=true only after testing. Do not reveal or ask for gold patches. "
             "Use a short observe-edit-test loop: after at most 3 exploration commands, "
