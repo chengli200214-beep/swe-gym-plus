@@ -18,8 +18,15 @@ frozen SWE-Gym revision, a quality report for every task, and complete artifacts
 - P1: checkpoint/recovery decisions, cumulative token/time/cost budgets,
   no-progress detection, evidence-aware compression, independent candidates,
   rule-based selection, honest metrics, and an optional FastAPI run index.
-- P2/P3 interfaces: interaction-preserving SFT conversion and binary formal
-  reward. They are extension points, not fabricated training results.
+- P2: interaction-preserving SFT conversion, QLoRA training configuration and
+  a remote SFT v4 experiment with six independently evaluated trajectories.
+- P3/GRPO: formal reward interface is present, but no GRPO benchmark claim is
+  made. GRPO remains a separate follow-up experiment.
+
+The latest honest results are recorded in
+[`experiments/sft-v0/evaluation/comparison.md`](experiments/sft-v0/evaluation/comparison.md),
+and the remote reproduction steps are in
+[`docs/experiment-reproduction.md`](docs/experiment-reproduction.md).
 
 The original Hercules checkout remains in `../upstream/testzeus-hercules` as a
 reference. Its browser-specific AgentTestBench code is not imported by this
@@ -84,4 +91,4 @@ src/codeagentbench/
 
 The intended delivery order remains: trusted task/evaluation controls → API
 baseline → reliable harness → multi-candidate comparison → service → SFT →
-GRPO.
+optional GRPO research extension.
