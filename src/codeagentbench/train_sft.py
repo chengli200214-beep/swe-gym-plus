@@ -211,7 +211,13 @@ def encode_example(tokenizer: Any, messages: list[dict[str, str]], max_seq_len: 
     input_ids: list[int] = []
     labels: list[int] = []
     for index, message in enumerate(messages):
-        prefix_ids = tokenizer(render(messages[:index]), add_special_tokens=False)["input_ids"]
+        # Qwen chat templates reject an empty conversation.  The first turn has
+        # no prefix tokens, so avoid rendering ``messages[:0]`` altogether.
+        prefix_ids = (
+            []
+            if index == 0
+            else tokenizer(render(messages[:index]), add_special_tokens=False)["input_ids"]
+        )
         current_ids = tokenizer(render(messages[:index + 1]), add_special_tokens=False)["input_ids"]
         if current_ids[: len(prefix_ids)] != prefix_ids:
             # This template is not prefix-stable for this turn, so the supervised
