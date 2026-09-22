@@ -324,36 +324,47 @@ def _require_gpu() -> Any:
 def _build_model_and_tokenizer(config: SFTConfig, torch: Any) -> tuple[Any, Any]:
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-    if not config.load_in_4bit:
-        raise RuntimeError("section 9 requires 4-bit NF4 QLoRA; `load_in_4bit` must stay true")
-
-    try:
-        import bitsandbytes  # noqa: F401
-    except ImportError as exc:
-        raise RuntimeError("QLoRA requires bitsandbytes: pip install bitsandbytes") from exc
-    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from peft import LoraConfig, get_peft_model
 
     tokenizer = AutoTokenizer.from_pretrained(config.base_model, trust_remote_code=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    quantisation = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type=config.bnb_quant_type,
-        bnb_4bit_use_double_quant=config.bnb_double_quant,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        config.base_model,
-        quantization_config=quantisation,
-        device_map="auto",
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-    )
+    if config.load_in_4bit:
+        try:
+            import bitsandbytes  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError("QLoRA requires bitsandbytes: pip install bitsandbytes") from exc
+        from peft import prepare_model_for_kbit_training
+
+        quantisation = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type=config.bnb_quant_type,
+            bnb_4bit_use_double_quant=config.bnb_double_quant,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            config.base_model,
+            quantization_config=quantisation,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        )
+    else:
+        # AMD/ROCm images commonly cannot use bitsandbytes 4-bit kernels. A
+        # BF16 base model plus LoRA keeps the same training contract without
+        # requiring the CUDA-only quantisation path.
+        model = AutoModelForCausalLM.from_pretrained(
+            config.base_model,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        )
     model.config.use_cache = False
     if config.gradient_checkpointing:
         model.gradient_checkpointing_enable()
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=config.gradient_checkpointing)
+    if config.load_in_4bit:
+        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=config.gradient_checkpointing)
     lora = LoraConfig(
         r=config.lora_rank,
         lora_alpha=config.lora_alpha,

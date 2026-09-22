@@ -139,7 +139,7 @@ class RunConfig:
     """A reproducible run configuration and its whole-task budget."""
 
     model: str = "scripted"
-    temperature: float = 0.0
+    temperature: float = 0.2
     max_steps: int = 12
     max_tool_calls: int = 32
     max_tokens: int = 32_000

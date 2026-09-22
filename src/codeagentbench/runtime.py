@@ -405,6 +405,9 @@ class AgentRuntime:
         return (
             "You are a coding agent. Inspect and modify the repository with the available shell. "
             f"{shell_note} "
+            "The execution environment may display a platform banner before the shell prompt; ignore that banner. "
+            "Use the current task workspace as the repository root. Do not cd to /mnt/workspace and do not use "
+            "absolute /mnt/workspace paths in commands; operate on the checked-out task workspace directly. "
             "The harness has already prepared this workspace from the requested base commit; do not run "
             "git checkout, git fetch, git reset, or otherwise switch revisions before inspecting the files. "
             'Return exactly JSON: {"command":"...", "done":false, "message":"..."}. '
