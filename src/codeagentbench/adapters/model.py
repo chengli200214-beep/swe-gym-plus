@@ -145,6 +145,7 @@ class DeepSeekModel:
             "messages": messages,
             "temperature": temperature,
             "thinking": {"type": self.thinking},
+            "response_format": {"type": "json_object"},
             "max_tokens": self.max_output_tokens,
         }
         response = None

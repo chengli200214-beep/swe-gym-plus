@@ -30,6 +30,7 @@ def test_deepseek_request_has_bounded_output_and_non_thinking_default(monkeypatc
 
     assert captured["request"]["model"] == "deepseek-flash"
     assert captured["request"]["thinking"] == {"type": "disabled"}
+    assert captured["request"]["response_format"] == {"type": "json_object"}
     assert captured["request"]["max_tokens"] == 4096
     assert response.prompt_tokens == 12
     assert response.completion_tokens == 4

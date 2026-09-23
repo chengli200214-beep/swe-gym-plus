@@ -4,8 +4,8 @@
 
 ## 本次环境
 
-- `moto-7365` 复验使用 `a70e188`；新的 `moto-6920` 运行使用 `6c4da71`（DeepSeek 单次输出上限与非思考模式默认值已加入）。
-- ModelScope Code Workspace：`/mnt/workspace/swe-gym-plus-current` 是独立 worktree，本轮已切换到 detached HEAD `6c4da71`；原目录 `/mnt/workspace/swe-gym-plus` 保持原状，并存放仓库缓存和本次运行数据。
+- `moto-7365` 复验使用 `a70e188`；`moto-6920`、`moto-5085`、`moto-5386` 使用 `6c4da71`；修复无补丁提醒丢失问题后云端切换至 `e763208`。
+- ModelScope Code Workspace：`/mnt/workspace/swe-gym-plus-current` 是独立 worktree，当前 detached HEAD `e763208`；原目录 `/mnt/workspace/swe-gym-plus` 保持原状，并存放仓库缓存和本次运行数据。
 - 数据版本：`data/manifests/swegym-smoke.json`，SWE-Gym revision `bb94ed9e39bbeb96a7fcbfb533b80f25a7fd59cb`，共 10 个 smoke 任务。
 - 云端 PyTorch `2.12.0+git6bbd260`，ROCm `7.2.53211`，`torch.cuda.is_available()` 为 `True`。`bitsandbytes` 尚未安装；不能据此认定 QLoRA 训练环境已就绪。
 - 新 DeepSeek API key 的连通性已由最小请求验证；`moto-6920` 使用 `deepseek-flash`，默认关闭思考模式、单次最多 4,096 输出 token。API key 只注入当前云端终端的环境变量，**未写入 Git、配置或本文档**。新终端/重启实例后需重新注入。
@@ -28,6 +28,8 @@
 | `ms-5085-20260923-a` | 独立评测 failed | `deepseek-flash` 在 20 步/20 次工具调用后未产出补丁，`summary.json` 为 `maximum agent steps reached`，隔离评测仍是 1 failed / 77 passed；51,110 token。轨迹显示反复搜索相关源码但没有编辑，不导入 SFT。 |
 | `getmoto__moto-5386` 质量检查 | admitted | 未修复版 2 failed / 83 passed，官方补丁版 85 passed。 |
 | `ms-5386-20260923-a` | 独立评测 failed，Agent 状态 blocked | `deepseek-flash` 在 16 次工具调用后累计 49,567 token，下一步超过 50,000 token 上限；没有补丁，隔离评测仍是 2 failed / 83 passed。不导入 SFT。 |
+| `getmoto__moto-5212` 质量检查 | admitted | 未修复版 3 failed / 46 passed，官方补丁版 49 passed。 |
+| `ms-5212-20260923-a` | 独立评测 failed | `e763208` + `deepseek-v4-pro` 的首次响应是 DSML 工具调用文本，不是 Harness 要求的 JSON；`summary.json` 为 `model response is not valid JSON`，仅用 761 token、无工具调用或补丁。该次是协议适配失败，不代表任务无法修复。 |
 
 原始运行数据保存在 ModelScope 的 `/mnt/workspace/swe-gym-plus/artifacts/runs/<run-id>/`。真实 SWE-Gym 通过样本目前来自 **2 个不同任务**：此前的 `/mnt/workspace/swe-gym-plus/artifacts/exports/ms-7365-20260923-c.jsonl`（1 条、约 66 KB；18 次模型动作、18 次工具反馈；同时保留 `evaluation_verdict=passed` 和 `agent_status=failed`；SHA-256 `df08cd1652e2297ef0b501167162c0e2a9f9bfae92a7467f1a414f33c9912136`），以及新的 `/mnt/workspace/swe-gym-plus/artifacts/exports/ms-6920-20260923-a.jsonl`（1 条、20 条消息、9 次工具调用、33,206 token、19,246 字节；`evaluation_verdict=passed`、`agent_status=completed`）。其他失败轨迹不应导入 SFT 训练集。实例不应被删除；停止/重启前应确认工作区仍可访问，并将需要跨平台保存的结果另行备份。
 
@@ -47,6 +49,8 @@
 
 本次还发现 ModelScope 的登录 Bash 会在每次 Agent 工具输出前注入冗长的平台欢迎横幅。运行器已改为在原生 Bash 使用非登录 `bash -c`，并加入回归测试；前三次失败运行均使用修复前代码，不能把它们归因于模型本身而忽略环境干扰。
 
-`ms-5085-20260923-a` 和 `ms-5386-20260923-a` 暴露了 Agent 在源码搜索上消耗全部动作/token 的问题。进一步审查发现，六次无补丁动作后的 Harness 提醒写入消息后可能立即被上下文压缩清除；本地已修复为压缩后追加提醒，并覆盖后续无补丁动作，增加回归测试。该修复尚未在上述两次已结束的运行中生效，不能把它们算作修复后的对照结果。
+`ms-5085-20260923-a` 和 `ms-5386-20260923-a` 暴露了 Agent 在源码搜索上消耗全部动作/token 的问题。进一步审查发现，六次无补丁动作后的 Harness 提醒写入消息后可能立即被上下文压缩清除；`e763208` 已修复为压缩后追加提醒，并覆盖后续无补丁动作，增加回归测试。该修复未在上述两次已结束的运行中生效，不能把它们算作修复后的对照结果。
+
+`ms-5212-20260923-a` 发现 Pro 模型可能返回非 JSON 工具文本。适配器已按 DeepSeek 官方 JSON Output 接口添加 `response_format={"type":"json_object"}` 并完成本地回归测试；正式复跑前仍需用该配置做真实 API 小请求验证。
 
 `ms-7365-20260923-b` 已验证横幅消失，且产生了候选补丁，但也暴露了模型在 hidden tests 不在工作区时未检查新增符号导入的问题。系统提示因此加入通用的“检查新增名字定义/导入、无可见测试时做最小 smoke”要求；`ms-7365-20260923-c` 在新提示下独立评测通过，但其 Agent 仍因预算上限结束。后续应分别统计 Agent 完成率与最终补丁通过率。
