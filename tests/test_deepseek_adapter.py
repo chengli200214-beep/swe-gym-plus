@@ -44,6 +44,53 @@ def test_deepseek_output_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) 
     assert model.thinking == "enabled"
 
 
+def test_deepseek_retries_one_empty_response_and_counts_both_uses(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[dict] = []
+    contents = ["", '{"command": "pwd", "done": false}']
+
+    def post(url: str, *, headers: dict, json: dict, timeout: float):
+        requests.append(json.copy())
+        content = contents.pop(0)
+        return SimpleNamespace(
+            status_code=200,
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "choices": [{"message": {"content": content}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            },
+        )
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(post=post, RequestError=Exception))
+    response = DeepSeekModel(api_key="test-key").complete([{"role": "user", "content": "hi"}])
+
+    assert len(requests) == 2
+    assert requests[0]["messages"] == [{"role": "user", "content": "hi"}]
+    assert "previous response was empty" in requests[1]["messages"][-1]["content"]
+    assert response.text == '{"command": "pwd", "done": false}'
+    assert response.prompt_tokens == 20
+    assert response.completion_tokens == 10
+
+
+def test_deepseek_stops_after_two_empty_responses(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def post(url: str, *, headers: dict, json: dict, timeout: float):
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(
+            status_code=200,
+            raise_for_status=lambda: None,
+            json=lambda: {"choices": [{"message": {"content": None}}], "usage": {"completion_tokens": 3}},
+        )
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(post=post, RequestError=Exception))
+    response = DeepSeekModel(api_key="test-key").complete([{"role": "user", "content": "hi"}])
+
+    assert calls == 2
+    assert response.text == ""
+    assert response.completion_tokens == 6
+
+
 @pytest.mark.parametrize("name,value", [("DEEPSEEK_MAX_OUTPUT_TOKENS", "0"), ("DEEPSEEK_THINKING", "maybe")])
 def test_deepseek_rejects_invalid_limits(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
     monkeypatch.setenv(name, value)

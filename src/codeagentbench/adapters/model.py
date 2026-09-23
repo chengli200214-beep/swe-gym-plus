@@ -148,26 +148,37 @@ class DeepSeekModel:
             "response_format": {"type": "json_object"},
             "max_tokens": self.max_output_tokens,
         }
-        response = None
-        for attempt in range(4):
-            try:
-                response = httpx.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json=request,
-                    timeout=120.0,
-                )
-            except httpx.RequestError:
-                if attempt == 3:
-                    raise
+        prompt_tokens = completion_tokens = 0
+        cost_usd = 0.0
+        for empty_attempt in range(2):
+            response = None
+            for attempt in range(4):
+                try:
+                    response = httpx.post(
+                        f"{self.base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        json=request,
+                        timeout=120.0,
+                    )
+                except httpx.RequestError:
+                    if attempt == 3:
+                        raise
+                    time.sleep(2**attempt)
+                    continue
+                if response.status_code not in {429, 500, 502, 503, 504} or attempt == 3:
+                    break
                 time.sleep(2**attempt)
-                continue
-            if response.status_code not in {429, 500, 502, 503, 504} or attempt == 3:
-                break
-            time.sleep(2**attempt)
-        assert response is not None
-        response.raise_for_status()
-        payload = response.json()
-        usage = payload.get("usage", {})
-        text = payload["choices"][0]["message"]["content"]
-        return ModelResponse(text, int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0)), float(payload.get("cost_usd", 0.0)))
+            assert response is not None
+            response.raise_for_status()
+            payload = response.json()
+            usage = payload.get("usage", {})
+            prompt_tokens += int(usage.get("prompt_tokens", 0))
+            completion_tokens += int(usage.get("completion_tokens", 0))
+            cost_usd += float(payload.get("cost_usd", 0.0))
+            text = payload["choices"][0]["message"].get("content") or ""
+            if text.strip() or empty_attempt:
+                return ModelResponse(text, prompt_tokens, completion_tokens, cost_usd)
+            request["messages"] = messages + [
+                {"role": "user", "content": "The previous response was empty. Return one non-empty JSON action object."}
+            ]
+        raise AssertionError("unreachable")
