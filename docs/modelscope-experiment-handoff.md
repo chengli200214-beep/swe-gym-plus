@@ -4,11 +4,11 @@
 
 ## 本次环境
 
-- `moto-7365` 复验使用 `a70e188`；`moto-6920`、`moto-5085`、`moto-5386` 使用 `6c4da71`；修复无补丁提醒丢失问题后云端切换至 `e763208`。
-- ModelScope Code Workspace：`/mnt/workspace/swe-gym-plus-current` 是独立 worktree，当前 detached HEAD `e763208`；原目录 `/mnt/workspace/swe-gym-plus` 保持原状，并存放仓库缓存和本次运行数据。
+- `moto-7365` 复验使用 `a70e188`；`moto-6920`、`moto-5085`、`moto-5386` 使用 `6c4da71`；随后依次切换到 `e763208`（无补丁提醒）、`83ed644`（JSON 响应格式）和 `2c22e5c`（空响应限次重试）。
+- ModelScope Code Workspace：`/mnt/workspace/swe-gym-plus-current` 是独立 worktree，当前 detached HEAD `2c22e5c`；原目录 `/mnt/workspace/swe-gym-plus` 保持原状，并存放仓库缓存和本次运行数据。
 - 数据版本：`data/manifests/swegym-smoke.json`，SWE-Gym revision `bb94ed9e39bbeb96a7fcbfb533b80f25a7fd59cb`，共 10 个 smoke 任务。
 - 云端 PyTorch `2.12.0+git6bbd260`，ROCm `7.2.53211`，`torch.cuda.is_available()` 为 `True`。`bitsandbytes` 尚未安装；不能据此认定 QLoRA 训练环境已就绪。
-- 新 DeepSeek API key 的连通性已由最小请求验证；`moto-6920` 使用 `deepseek-flash`，默认关闭思考模式、单次最多 4,096 输出 token。API key 只注入当前云端终端的环境变量，**未写入 Git、配置或本文档**。新终端/重启实例后需重新注入。
+- 新 DeepSeek API key 的连通性已由最小请求验证；`moto-6920` 使用 `deepseek-flash`，默认关闭思考模式、单次最多 4,096 输出 token。API key **未写入 Git、配置或本文档**；当前只在云端运行终端的环境变量中可用。云端终端和平台日志不可视为绝对安全，用后应轮换；新终端/重启实例后需重新注入。
 - 为任务测试补装了云端 Python 依赖 `freezegun==1.5.5`、`docker==7.2.0` 和 `pytz==2026.3.post1`；新实例必须重新安装或使用可复现环境。
 
 ## 已完成的任务与证据
@@ -30,6 +30,9 @@
 | `ms-5386-20260923-a` | 独立评测 failed，Agent 状态 blocked | `deepseek-flash` 在 16 次工具调用后累计 49,567 token，下一步超过 50,000 token 上限；没有补丁，隔离评测仍是 2 failed / 83 passed。不导入 SFT。 |
 | `getmoto__moto-5212` 质量检查 | admitted | 未修复版 3 failed / 46 passed，官方补丁版 49 passed。 |
 | `ms-5212-20260923-a` | 独立评测 failed | `e763208` + `deepseek-v4-pro` 的首次响应是 DSML 工具调用文本，不是 Harness 要求的 JSON；`summary.json` 为 `model response is not valid JSON`，仅用 761 token、无工具调用或补丁。该次是协议适配失败，不代表任务无法修复。 |
+| `ms-5212-20260923-b` | 独立评测 failed，Agent 状态 completed | `83ed644` + `deepseek-v4-pro` 的 JSON 模式在真实小请求及本次 rollout 中可用；Agent 14 步、13 次工具调用、46,546 token，产生 `moto/ec2/models/vpcs.py` 补丁并正常结束，但隔离评测 5 failed / 44 passed（未修复版为 3 failed / 46 passed），`verdict=failed`。不导出 SFT。 |
+| `ms-5876-20260923-c` | 独立评测 failed | `83ed644` + `deepseek-v4-pro` 首次响应为空，运行器报 `model response is not valid JSON`；1,909 token、无工具调用或补丁，隔离评测仍为 1 failed / 2 passed。说明 JSON 模式不保证每次返回非空动作。 |
+| `ms-5876-20260923-d` | 独立评测 failed，Agent 状态 blocked | `2c22e5c` 加入空响应最多一次重试后，模型执行到第 15 步、14 次工具调用、56,309 token，生成约 999 字节 Cognito 补丁；下一步超过 60,000 token 上限。隔离评测 2 failed / 1 passed，`verdict=failed`；不导出 SFT。 |
 
 原始运行数据保存在 ModelScope 的 `/mnt/workspace/swe-gym-plus/artifacts/runs/<run-id>/`。真实 SWE-Gym 通过样本目前来自 **2 个不同任务**：此前的 `/mnt/workspace/swe-gym-plus/artifacts/exports/ms-7365-20260923-c.jsonl`（1 条、约 66 KB；18 次模型动作、18 次工具反馈；同时保留 `evaluation_verdict=passed` 和 `agent_status=failed`；SHA-256 `df08cd1652e2297ef0b501167162c0e2a9f9bfae92a7467f1a414f33c9912136`），以及新的 `/mnt/workspace/swe-gym-plus/artifacts/exports/ms-6920-20260923-a.jsonl`（1 条、20 条消息、9 次工具调用、33,206 token、19,246 字节；`evaluation_verdict=passed`、`agent_status=completed`）。其他失败轨迹不应导入 SFT 训练集。实例不应被删除；停止/重启前应确认工作区仍可访问，并将需要跨平台保存的结果另行备份。
 
@@ -51,6 +54,6 @@
 
 `ms-5085-20260923-a` 和 `ms-5386-20260923-a` 暴露了 Agent 在源码搜索上消耗全部动作/token 的问题。进一步审查发现，六次无补丁动作后的 Harness 提醒写入消息后可能立即被上下文压缩清除；`e763208` 已修复为压缩后追加提醒，并覆盖后续无补丁动作，增加回归测试。该修复未在上述两次已结束的运行中生效，不能把它们算作修复后的对照结果。
 
-`ms-5212-20260923-a` 发现 Pro 模型可能返回非 JSON 工具文本。适配器已按 DeepSeek 官方 JSON Output 接口添加 `response_format={"type":"json_object"}` 并完成本地回归测试；正式复跑前仍需用该配置做真实 API 小请求验证。
+`ms-5212-20260923-a` 发现 Pro 模型可能返回非 JSON 工具文本。适配器按 DeepSeek 官方 JSON Output 接口添加 `response_format={"type":"json_object"}`，完成本地回归测试与真实 API 小请求验证；`ms-5212-20260923-b` 证明协议可工作，但补丁未通过隔离评测。`ms-5876-20260923-c` 又观察到一次空响应；`2c22e5c` 加入最多一次重试并累计两次请求的 token 用量，本地全套 49 个测试通过，云端适配器测试通过，`ms-5876-20260923-d` 确实进入多步工具循环，但最终补丁仍未通过。该重试不是解决率提升的证据。
 
 `ms-7365-20260923-b` 已验证横幅消失，且产生了候选补丁，但也暴露了模型在 hidden tests 不在工作区时未检查新增符号导入的问题。系统提示因此加入通用的“检查新增名字定义/导入、无可见测试时做最小 smoke”要求；`ms-7365-20260923-c` 在新提示下独立评测通过，但其 Agent 仍因预算上限结束。后续应分别统计 Agent 完成率与最终补丁通过率。
