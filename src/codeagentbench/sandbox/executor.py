@@ -49,7 +49,15 @@ class BashExecutor:
             wsl_path = self._wsl_path(cwd)
             command_text = re.sub(r"(?<![\w.-])python(?=\s)", "python.exe", command_text)
             command_text = f"cd {shlex.quote(wsl_path)} && {command_text}"
-        command = [self.bash, "-lc", command_text] if (use_wsl or use_native_bash) else command_text
+        # Native bash does not need a login profile: on hosted workspaces it
+        # can print a platform banner into every tool result, wasting context.
+        # Keep WSL's existing login behavior for its path/environment setup.
+        if use_native_bash:
+            command = [self.bash, "-c", command_text]
+        elif use_wsl:
+            command = [self.bash, "-lc", command_text]
+        else:
+            command = command_text
         try:
             try:
                 result = subprocess.run(command, cwd=cwd, env=env, shell=not (use_wsl or use_native_bash), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=intent.timeout_seconds, check=False)

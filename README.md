@@ -27,6 +27,8 @@ The latest honest results are recorded in
 [`experiments/sft-v0/evaluation/comparison.md`](experiments/sft-v0/evaluation/comparison.md),
 and the remote reproduction steps are in
 [`docs/experiment-reproduction.md`](docs/experiment-reproduction.md).
+The current ModelScope workspace status and cross-machine handoff are in
+[`docs/modelscope-experiment-handoff.md`](docs/modelscope-experiment-handoff.md).
 
 The original Hercules checkout remains in `../upstream/testzeus-hercules` as a
 reference. Its browser-specific AgentTestBench code is not imported by this
@@ -54,6 +56,9 @@ For the API baseline, set `DEEPSEEK_API_KEY` in a local environment and use a
 manifest whose `repo`, `base_commit` and evaluation fields have been frozen.
 The adapter records the returned model usage; it never stores the API key in an
 artifact.
+The DeepSeek adapter currently records token usage but not a real USD charge;
+its `--max-cost-usd` setting is therefore not an effective API spending cap.
+Use token, step and time budgets until provider-aware accounting is added.
 
 ## Design boundaries
 
