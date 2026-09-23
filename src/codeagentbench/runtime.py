@@ -327,18 +327,13 @@ class AgentRuntime:
                 diff = workspace.diff()
                 if diff:
                     context.add("diff", diff, source=action_id, priority=90, confirmed=True)
-                if step == 5 and not diff:
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Harness checkpoint: six actions have been used without a patch. "
-                                "You have enough context to implement the issue. Stop broad exploration, "
-                                "read only the exact target method if needed, and apply the smallest "
-                                "implementation change in your next action. Do not run another search "
-                                "or test-discovery command first."
-                            ),
-                        }
+                checkpoint_warning = None
+                if step >= 5 and not diff:
+                    checkpoint_warning = (
+                        f"Harness checkpoint: {step + 1} actions have been used without a patch. "
+                        "Stop broad exploration, read only the exact target method if needed, "
+                        "and apply the smallest implementation change in your next action. "
+                        "Do not run another search or test-discovery command first."
                     )
                 context_text = context.render(max_chars=8_000)
                 if sum(len(message.get("content", "")) for message in messages) > 16_000:
@@ -347,6 +342,10 @@ class AgentRuntime:
                         {"role": "user", "content": self._initial_prompt(view)},
                         {"role": "user", "content": "Evidence summary after context compression:\n" + context_text},
                     ]
+                # Add this after compression so the next model call cannot lose
+                # the intervention at the exact point it is needed.
+                if checkpoint_warning:
+                    messages.append({"role": "user", "content": checkpoint_warning})
                 state.context_compressions = len(context.compressions)
                 self._checkpoint(state, ledger, workspace, messages)
             else:

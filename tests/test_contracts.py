@@ -186,6 +186,33 @@ def test_runtime_produces_real_diff_and_checkpoint(tmp_path: Path) -> None:
     assert (tmp_path / "artifacts/runs/run-1/actions.jsonl").exists()
 
 
+def test_no_patch_checkpoint_survives_context_compression(tmp_path: Path) -> None:
+    class CapturingModel(ScriptedModel):
+        def __init__(self) -> None:
+            super().__init__(
+                [{"command": f"python -c \"print('x' * 16000 + str({i}))\""} for i in range(6)]
+                + [{"done": True}]
+            )
+            self.last_messages: list[dict[str, str]] = []
+
+        def complete(self, messages: list[dict[str, str]], *, temperature: float = 0.0):
+            self.last_messages = list(messages)
+            return super().complete(messages, temperature=temperature)
+
+    task = demo_task()
+    workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "no-patch")
+    model = CapturingModel()
+    AgentRuntime(ArtifactStore(tmp_path / "artifacts")).run(
+        task,
+        workspace,
+        model,
+        RunConfig(max_steps=7, max_seconds=60, max_tool_calls=6),
+        run_id="no-patch",
+    )
+    assert any("Evidence summary after context compression" in item["content"] for item in model.last_messages)
+    assert "Harness checkpoint: 6 actions" in model.last_messages[-1]["content"]
+
+
 def test_runtime_recovery_does_not_replay_unacknowledged_action(tmp_path: Path) -> None:
     task = demo_task()
     workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "crashed")
