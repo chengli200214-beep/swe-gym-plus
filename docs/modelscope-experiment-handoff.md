@@ -4,7 +4,7 @@
 
 ## 最新进展：5 条通过轨迹与云端 SFT
 
-云端代码已同步到 `e921a56`。从 10 个冻结的 getmoto 训练候选中继续做未修复/官方补丁控制测试、Agent rollout 和独立评测；未准入或最终评测失败的运行不进入训练集。新增通过任务为 `getmoto__moto-7023`（`ms-7023-20260923-a`，Agent completed，9/9 passed）、`getmoto__moto-6208`（`ms-6208-20260923-a`，Agent blocked，5/5 passed）、`getmoto__moto-7061`（`ms-7061-20260923-a`，Agent blocked，8/8 passed）。加上已有的 `7365`、`6920`，共 **5 个不同任务的独立评测通过轨迹**，但其中 **3 个 Agent 运行状态为 failed/blocked**；这里只把最终补丁评测通过与 Agent 正常完成分开记录。`6190` 控制测试收集失败，`6410`、`5699`、`6509`、`5949` 的本轮 Agent 补丁未通过；`7168` 控制测试准入但未用于训练。`4950`、`7456` 仍保留为 held-out 候选。
+本轮训练使用的代码版本为 `e921a56`；实验结束后云端工作树已同步到包含本记录的最新 `main`。从 10 个冻结的 getmoto 训练候选中继续做未修复/官方补丁控制测试、Agent rollout 和独立评测；未准入或最终评测失败的运行不进入训练集。新增通过任务为 `getmoto__moto-7023`（`ms-7023-20260923-a`，Agent completed，9/9 passed）、`getmoto__moto-6208`（`ms-6208-20260923-a`，Agent blocked，5/5 passed）、`getmoto__moto-7061`（`ms-7061-20260923-a`，Agent blocked，8/8 passed）。加上已有的 `7365`、`6920`，共 **5 个不同任务的独立评测通过轨迹**，但其中 **3 个 Agent 运行状态为 failed/blocked**；这里只把最终补丁评测通过与 Agent 正常完成分开记录。`6190` 控制测试收集失败，`6410`、`5699`、`6509`、`5949` 的本轮 Agent 补丁未通过；`7168` 控制测试准入但未用于训练。`4950`、`7456` 仍保留为 held-out 候选。
 
 5 个私有导出位于 `/mnt/workspace/swe-gym-plus/artifacts/exports/ms-{7365-20260923-c,6920-20260923-a,7023-20260923-a,6208-20260923-a,7061-20260923-a}.jsonl`。`scripts/prepare_passed_sft.py` 核对独立评测通过、任务/运行 ID 唯一及 assistant 监督后，生成 `/mnt/workspace/swe-gym-plus/experiments/sft-bootstrap/data/train-5-passed.jsonl`（5 行，SHA-256 `8eac5ccdc54a6ed3486145bc859e6b3ae2cc8a4ea6ee2f97e1c9597305e7842d`）及同目录的 `train-5-passed.receipt.json`（每个导出的来源与校验和）。原始轨迹、合并数据和模型权重未公开上传 GitHub；换电脑需登录同一 ModelScope 工作区确认 `/mnt/workspace` 数据仍在。
 
