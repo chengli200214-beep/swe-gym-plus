@@ -125,7 +125,13 @@ class DeepSeekModel:
     def __init__(self, api_key: str | None = None, base_url: str | None = None, model: str | None = None) -> None:
         self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY", "")
         self.base_url = (base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")).rstrip("/")
-        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
+        self.max_output_tokens = int(os.getenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "4096"))
+        if self.max_output_tokens < 1:
+            raise ValueError("DEEPSEEK_MAX_OUTPUT_TOKENS must be positive")
+        self.thinking = os.getenv("DEEPSEEK_THINKING", "disabled")
+        if self.thinking not in {"enabled", "disabled"}:
+            raise ValueError("DEEPSEEK_THINKING must be enabled or disabled")
         if not self.api_key:
             raise ValueError("DEEPSEEK_API_KEY is required for the API baseline")
 
@@ -138,6 +144,8 @@ class DeepSeekModel:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
+            "thinking": {"type": self.thinking},
+            "max_tokens": self.max_output_tokens,
         }
         response = None
         for attempt in range(4):
