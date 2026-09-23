@@ -34,6 +34,11 @@ def test_agent_view_does_not_leak_gold_patch() -> None:
     assert "SECRET-GOLD" not in json.dumps(view)
 
 
+def test_system_prompt_requires_new_symbol_import_check() -> None:
+    prompt = AgentRuntime._system_prompt()
+    assert "newly referenced name is defined or imported" in prompt
+
+
 def test_parse_action_repairs_unescaped_quotes_inside_command() -> None:
     action = parse_action(
         '{"command": "findstr /n /c:"launch_template" moto\\\\ec2\\\\models.py", '
