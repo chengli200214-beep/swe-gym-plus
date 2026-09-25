@@ -105,6 +105,21 @@ class BashExecutor:
             # The model may inspect Git state but must not install hooks or
             # change core.fsmonitor before the parent calls Git outside bwrap.
             command.extend(["--ro-bind", str(git_metadata), "/workspace/.git"])
+            alternates_file = git_metadata / "objects" / "info" / "alternates"
+            if alternates_file.is_file():
+                cache_root = (self.workspace.parents[1] / ".repo_cache").resolve()
+                for line in alternates_file.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    alternate = Path(line.strip())
+                    if not alternate.is_absolute():
+                        alternate = git_metadata / "objects" / alternate
+                    alternate = alternate.resolve()
+                    if not alternate.is_dir() or not alternate.is_relative_to(cache_root):
+                        raise RuntimeError("Git alternate is outside the approved repository cache")
+                    # Only this task's immutable object store is visible, not
+                    # the whole cache or another task's checkout.
+                    command.extend(["--ro-bind", str(alternate), str(alternate)])
         command.extend([
             "--chdir", sandbox_cwd,
             "--clearenv", "--setenv", "PATH", "/usr/bin:/bin",
