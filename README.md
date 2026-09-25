@@ -29,6 +29,8 @@ and the remote reproduction steps are in
 [`docs/experiment-reproduction.md`](docs/experiment-reproduction.md).
 The current ModelScope workspace status and cross-machine handoff are in
 [`docs/modelscope-experiment-handoff.md`](docs/modelscope-experiment-handoff.md).
+The stage-by-stage completion audit and current blockers are in
+[`docs/completion-status-2026-09-25.md`](docs/completion-status-2026-09-25.md).
 
 The original Hercules checkout remains in `../upstream/testzeus-hercules` as a
 reference. Its browser-specific AgentTestBench code is not imported by this

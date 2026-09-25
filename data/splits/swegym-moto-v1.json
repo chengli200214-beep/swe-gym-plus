@@ -1,0 +1,35 @@
+{
+  "dataset": "SWE-Gym",
+  "revision": "bb94ed9e39bbeb96a7fcbfb533b80f25a7fd59cb",
+  "notes": "Task-level split of the 20 currently imported Moto tasks. Dev tasks have influenced debugging. Moto-4950 was used in the earlier 3B SFT v4 training report, so it is excluded from later blind comparisons. Moto-7456 is only a candidate, not a frozen final test set.",
+  "train": [
+    "getmoto__moto-7365",
+    "getmoto__moto-6920",
+    "getmoto__moto-7023",
+    "getmoto__moto-6208",
+    "getmoto__moto-7061"
+  ],
+  "dev": [
+    "getmoto__moto-5876",
+    "getmoto__moto-5085",
+    "getmoto__moto-5212",
+    "getmoto__moto-5386"
+  ],
+  "test_candidates": [
+    "getmoto__moto-7456"
+  ],
+  "excluded_prior_train": [
+    "getmoto__moto-4950"
+  ],
+  "unassigned": [
+    "getmoto__moto-6709",
+    "getmoto__moto-7082",
+    "getmoto__moto-6190",
+    "getmoto__moto-6410",
+    "getmoto__moto-5699",
+    "getmoto__moto-6509",
+    "getmoto__moto-5949",
+    "getmoto__moto-7168",
+    "getmoto__moto-6641"
+  ]
+}

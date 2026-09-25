@@ -306,24 +306,29 @@ class AgentRuntime:
                             ),
                         }
                     )
-                signature = hashlib.sha256(f"{action.command}\0{pre_digest}\0{receipt.exit_code}\0{receipt.stdout}\0{receipt.stderr}".encode("utf-8")).hexdigest()
+                # A search or test can produce timestamps, paths or warning counts
+                # that vary on every run while revealing no new repository state.
+                # Repeating the same command against the same checkout is still
+                # a no-progress loop. A real edit changes the workspace digest,
+                # so a necessary post-edit retest starts a new streak.
+                signature = hashlib.sha256(f"{action.command}\0{pre_digest}".encode("utf-8")).hexdigest()
                 repeated = repeated + 1 if signature == previous_signature else 0
                 previous_signature = signature
+                self.artifact_store.append_event(run_id, {"type": "tool", "intent": asdict(intent), "receipt": asdict(receipt)})
                 if repeated == 1:
                     messages.append(
                         {
                             "role": "user",
                             "content": (
-                                "Harness warning: this action produced the same command, workspace state, and result twice. "
+                                "Harness warning: the same command ran twice without any workspace change. "
                                 "Choose a different command now; do not retry the same shell expression."
                             ),
                         }
                     )
                 if repeated >= 2:
-                    state.status, state.failure_reason = "failed", "no progress: identical command, workspace and result repeated"
+                    state.status, state.failure_reason = "failed", "no progress: identical command repeated without workspace change"
                     self.artifact_store.append_event(run_id, {"type": "no_progress", "action_id": action_id})
                     break
-                self.artifact_store.append_event(run_id, {"type": "tool", "intent": asdict(intent), "receipt": asdict(receipt)})
                 diff = workspace.diff()
                 if diff:
                     context.add("diff", diff, source=action_id, priority=90, confirmed=True)

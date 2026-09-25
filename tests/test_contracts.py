@@ -163,6 +163,26 @@ def test_budget_is_cumulative_and_rejects_overrun() -> None:
     assert ledger.snapshot.tokens == 8
 
 
+def test_budget_restore_cannot_erase_a_later_counter() -> None:
+    from codeagentbench.harness.budget import BudgetSnapshot
+
+    ledger = BudgetLedger(100, 100, 10, 10)
+    ledger.consume(tokens=5, tool_calls=2)
+    with pytest.raises(ValueError, match="erases spending"):
+        ledger.restore(BudgetSnapshot(100, 100, 10, 10, 6, 0.0, 0.0, 1))
+
+
+def test_budget_rejects_nonfinite_cost_and_mismatched_checkpoint() -> None:
+    from codeagentbench.harness.budget import BudgetSnapshot
+
+    ledger = BudgetLedger(100, 100, 10, 10)
+    with pytest.raises(ValueError, match="finite"):
+        ledger.consume(cost_usd=float("nan"))
+    assert ledger.can_spend(cost_usd=float("nan")) is False
+    with pytest.raises(ValueError, match="different limits"):
+        ledger.restore(BudgetSnapshot(101, 100, 10, 10, 0, 0.0, 0.0, 0))
+
+
 def test_context_compression_keeps_issue_and_failure() -> None:
     context = ContextManager("the issue must remain")
     context.add("search", "x" * 500, priority=1)
@@ -227,6 +247,25 @@ def test_no_patch_checkpoint_survives_context_compression(tmp_path: Path) -> Non
     )
     assert any("Evidence summary after context compression" in item["content"] for item in model.last_messages)
     assert "Harness checkpoint: 6 actions" in model.last_messages[-1]["content"]
+
+
+def test_repeated_command_stops_even_when_output_changes(tmp_path: Path) -> None:
+    task = demo_task()
+    workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "repeated")
+    command = 'python -c "import uuid; print(uuid.uuid4())"'
+    store = ArtifactStore(tmp_path / "artifacts")
+    result = AgentRuntime(store).run(
+        task,
+        workspace,
+        ScriptedModel([{"command": command}] * 3),
+        RunConfig(max_steps=4, max_seconds=60, max_tool_calls=4),
+        run_id="repeated",
+    )
+    events = [json.loads(line) for line in (tmp_path / "artifacts/runs/repeated/events.jsonl").read_text().splitlines()]
+    assert result.status == "failed"
+    assert "no progress" in result.failure_reason
+    assert len([event for event in events if event["type"] == "tool"]) == 3
+    assert len([event for event in events if event["type"] == "no_progress"]) == 1
 
 
 def test_runtime_recovery_does_not_replay_unacknowledged_action(tmp_path: Path) -> None:

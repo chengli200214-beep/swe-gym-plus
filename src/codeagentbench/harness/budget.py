@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 
 class BudgetExceeded(RuntimeError):
@@ -37,6 +38,8 @@ class BudgetLedger:
     """Monotonic ledger; recovery and retries never reset already-spent cost."""
 
     def __init__(self, token_limit: int, seconds_limit: float, cost_limit_usd: float, tool_call_limit: int) -> None:
+        if token_limit < 0 or tool_call_limit < 0 or not isfinite(seconds_limit) or seconds_limit < 0 or not isfinite(cost_limit_usd) or cost_limit_usd < 0:
+            raise ValueError("budget limits must be finite and non-negative")
         self._snapshot = BudgetSnapshot(token_limit, seconds_limit, cost_limit_usd, tool_call_limit, 0, 0.0, 0.0, 0)
 
     @property
@@ -44,6 +47,8 @@ class BudgetLedger:
         return self._snapshot
 
     def can_spend(self, *, tokens: int = 0, seconds: float = 0.0, cost_usd: float = 0.0, tool_calls: int = 0) -> bool:
+        if tokens < 0 or tool_calls < 0 or not isfinite(seconds) or seconds < 0 or not isfinite(cost_usd) or cost_usd < 0:
+            return False
         current = self._snapshot
         return (
             current.tokens + tokens <= current.token_limit
@@ -53,8 +58,8 @@ class BudgetLedger:
         )
 
     def consume(self, *, tokens: int = 0, seconds: float = 0.0, cost_usd: float = 0.0, tool_calls: int = 0) -> BudgetSnapshot:
-        if min(tokens, seconds, cost_usd, tool_calls) < 0:
-            raise ValueError("budget consumption must be non-negative")
+        if tokens < 0 or tool_calls < 0 or not isfinite(seconds) or seconds < 0 or not isfinite(cost_usd) or cost_usd < 0:
+            raise ValueError("budget consumption must be finite and non-negative")
         if not self.can_spend(tokens=tokens, seconds=seconds, cost_usd=cost_usd, tool_calls=tool_calls):
             raise BudgetExceeded(f"task budget exceeded: {self._snapshot}")
         current = self._snapshot
@@ -74,11 +79,14 @@ class BudgetLedger:
         """Restore only a checkpoint that is not behind the current ledger."""
 
         current = self._snapshot
-        if (snapshot.tokens, snapshot.seconds, snapshot.cost_usd, snapshot.tool_calls) < (
-            current.tokens,
-            current.seconds,
-            current.cost_usd,
-            current.tool_calls,
-        ):
+        if (snapshot.token_limit, snapshot.seconds_limit, snapshot.cost_limit_usd, snapshot.tool_call_limit) != (current.token_limit, current.seconds_limit, current.cost_limit_usd, current.tool_call_limit):
+            raise ValueError("cannot restore a checkpoint with different limits")
+        if not all(isfinite(value) and value >= 0 for value in (snapshot.seconds, snapshot.cost_usd)):
+            raise ValueError("cannot restore a checkpoint with invalid spending")
+        if (snapshot.tokens < current.tokens or snapshot.seconds < current.seconds
+                or snapshot.cost_usd < current.cost_usd or snapshot.tool_calls < current.tool_calls):
             raise ValueError("cannot restore a budget checkpoint that erases spending")
+        if (snapshot.tokens > current.token_limit or snapshot.seconds > current.seconds_limit
+                or snapshot.cost_usd > current.cost_limit_usd or snapshot.tool_calls > current.tool_call_limit):
+            raise ValueError("cannot restore a checkpoint that exceeds limits")
         self._snapshot = snapshot
