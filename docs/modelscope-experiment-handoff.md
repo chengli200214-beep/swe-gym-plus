@@ -46,6 +46,8 @@ GitHub `main`、本地与云端 `/mnt/workspace/swe-gym-plus-next` 已同步到 
 
 5 个私有导出位于 `/mnt/workspace/swe-gym-plus/artifacts/exports/ms-{7365-20260923-c,6920-20260923-a,7023-20260923-a,6208-20260923-a,7061-20260923-a}.jsonl`。`scripts/prepare_passed_sft.py` 核对独立评测通过、任务/运行 ID 唯一及 assistant 监督后，生成 `/mnt/workspace/swe-gym-plus/experiments/sft-bootstrap/data/train-5-passed.jsonl`（5 行，SHA-256 `8eac5ccdc54a6ed3486145bc859e6b3ae2cc8a4ea6ee2f97e1c9597305e7842d`）及同目录的 `train-5-passed.receipt.json`（每个导出的来源与校验和）。原始轨迹、合并数据和模型权重未公开上传 GitHub；换电脑需登录同一 ModelScope 工作区确认 `/mnt/workspace` 数据仍在。
 
+2026-09-25 追加审计：上述 5 个私有导出各自的首条 Agent 用户提示均包含非空 `allowed_test_command`，来源是旧版代码误将评测专用 `test_command` 暴露给 Agent。它们的独立测试通过记录有效，但不能作为无评测命令泄漏的干净轨迹或盲测证据；已训练的 0.5B 适配器属于这一历史小样本链路验证，后续正式训练需使用修复后的新轨迹，旧文件不删改。修复代码提交 `b56e7b6` 已在云端工作树通过 4 项无密钥关键回归测试。
+
 使用 [`configs/sft-5passed-amd.yaml`](../configs/sft-5passed-amd.yaml) 先 dry-run，再在云端 AMD GPU 上进行 **Qwen2.5-Coder-0.5B-Instruct BF16 LoRA**（非 QLoRA）：5 条训练记录、5 条编码样本、0 条因无监督被丢弃，`max_seq_len=2048`、1 epoch、`global_step=5`、最终记录的 `train_loss≈1.664`。训练产物：`/mnt/workspace/swe-gym-plus/experiments/sft-bootstrap/checkpoints/qwen2.5-coder-0.5b-5passed-lora/`，其中 `adapter_model.safetensors` 约 34 MB、`train_metrics.json` 可复查。轨迹远长于 2048 token 时会截断，故该训练只是五样本链路验证；**尚未在固定 held-out 任务上完成 Base/SFT 对照，不能宣称解决率或模型质量提升**。这一步训练直接使用云端已有的本地基座模型，不需要调用 DeepSeek API；DeepSeek key 仅用于先前的轨迹生成，未写入仓库。
 
 ## 本次环境
