@@ -89,6 +89,11 @@ class BashExecutor:
         assert self.bwrap is not None
         relative = cwd.relative_to(self.workspace)
         sandbox_cwd = "/workspace" if relative == Path(".") else "/workspace/" + relative.as_posix()
+        # Ubuntu may route /usr/bin/python3 through /etc/alternatives, which
+        # is deliberately not mounted. Point at the resolved binary instead.
+        system_python = Path("/usr/bin/python3").resolve()
+        if os.name != "nt" and (not system_python.is_file() or not system_python.is_relative_to(Path("/usr"))):
+            raise RuntimeError("bwrap requires a system Python binary under /usr")
         command = [
             self.bwrap,
             "--unshare-user", "--unshare-pid", "--unshare-net",
@@ -101,7 +106,7 @@ class BashExecutor:
             # commands commonly invoke `python`. Keep the alias inside the
             # sandbox instead of modifying the host or exposing Conda.
             "--dir", "/toolbin",
-            "--symlink", "/usr/bin/python3", "/toolbin/python",
+            "--symlink", str(system_python), "/toolbin/python",
             "--dev", "/dev", "--tmpfs", "/tmp",
             "--bind", str(self.workspace), "/workspace",
         ]

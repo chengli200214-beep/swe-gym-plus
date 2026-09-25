@@ -39,7 +39,7 @@ def test_bwrap_exposes_only_checkout_and_clears_credentials(tmp_path) -> None:
     assert "--unshare-net" in command
     assert "--cap-drop" in command
     assert "--clearenv" in command
-    assert ["--symlink", "/usr/bin/python3", "/toolbin/python"] in [command[i:i + 3] for i in range(len(command) - 2)]
+    assert ["--symlink", str(Path("/usr/bin/python3").resolve()), "/toolbin/python"] in [command[i:i + 3] for i in range(len(command) - 2)]
     assert ["--setenv", "PATH", "/toolbin:/usr/bin:/bin"] in [command[i:i + 3] for i in range(len(command) - 2)]
     assert "--proc" not in command
     assert command[-3:] == ["/usr/bin/bash", "-c", "pwd"]
