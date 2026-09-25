@@ -62,6 +62,12 @@ The DeepSeek adapter currently records token usage but not a real USD charge;
 its `--max-cost-usd` setting is therefore not an effective API spending cap.
 Use token, step and time budgets until provider-aware accounting is added.
 
+Security boundary: the current local bash executor checks its starting working
+directory but does **not** confine the shell process to that directory. Model-
+generated commands may access other files visible to the process. Run real
+rollouts only in a disposable, least-privilege environment without credentials
+or private data mounted into the agent process; this is not a hardened sandbox.
+
 ## Design boundaries
 
 `AgentTaskView` contains the issue, base repository and permitted test context.

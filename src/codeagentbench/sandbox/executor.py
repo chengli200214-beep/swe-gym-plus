@@ -19,10 +19,10 @@ from codeagentbench.sandbox.workspace import workspace_digest
 class BashExecutor:
     """Execute the same bash-style interface used by mini-swe-agent.
 
-    The runner refuses to run outside the supplied workspace and filters
-    credential-like variables before launching a tool. Docker execution is a
-    deployment concern; the boundary and policy are explicit so a container
-    backend can replace this local runner without changing the agent protocol.
+    The runner checks the starting cwd and filters credential-like variables.
+    This is not a sandbox: a shell command can read or write files outside its
+    starting cwd. Real model-generated commands require a separate low-privilege
+    container backend without secrets or private data mounted into it.
     """
 
     def __init__(self, workspace: str | Path, journal: ActionJournal | None = None, output_limit: int = 20_000) -> None:

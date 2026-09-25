@@ -44,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     quality.add_argument("manifest", type=Path)
     quality.add_argument("task_id")
     quality.add_argument("--timeout", type=float, default=600.0)
+    quality.add_argument("--output", type=Path, help="save the complete control report as JSON")
     export_sft = sub.add_parser("export-sft")
     export_sft.add_argument("events", type=Path)
     export_sft.add_argument("output", type=Path)
@@ -66,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"unknown task: {args.task_id}", file=sys.stderr)
             return 2
         report = run_controls(task, timeout=args.timeout, cache_root=Path("artifacts/.repo_cache"))
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(report.to_dict(), ensure_ascii=False))
         return 0 if report.admitted else 1
     if args.command == "export-sft":

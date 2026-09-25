@@ -79,7 +79,7 @@ class Workspace:
 
 
 class WorkspaceManager:
-    """Create isolated workspaces; no host directory is mounted into an agent."""
+    """Create separate checkouts; command execution still needs OS isolation."""
 
     def __init__(self, root: str | Path, *, cache_root: str | Path | None = None) -> None:
         self.root = Path(root)
