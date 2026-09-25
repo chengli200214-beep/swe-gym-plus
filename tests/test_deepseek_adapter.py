@@ -104,6 +104,62 @@ def test_deepseek_missing_usage_has_no_cost_estimate(monkeypatch: pytest.MonkeyP
     assert response.estimated_cost_cny is None
 
 
+def test_deepseek_balance_floor_checks_before_paid_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_MIN_BALANCE_CNY", "5.40")
+    monkeypatch.setenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "64")
+    calls: list[str] = []
+
+    def get(url: str, *, headers: dict, timeout: float):
+        calls.append("balance")
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"is_available": True, "balance_infos": [{"currency": "CNY", "total_balance": "35.40"}]},
+        )
+
+    def post(url: str, *, headers: dict, json: dict, timeout: float):
+        calls.append("paid")
+        return SimpleNamespace(
+            status_code=200,
+            raise_for_status=lambda: None,
+            json=lambda: {"choices": [{"message": {"content": '{"done": true}'}}],
+                          "usage": {"prompt_tokens": 10, "completion_tokens": 3}},
+        )
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(get=get, post=post, RequestError=Exception))
+    DeepSeekModel(api_key="test-key").complete([{"role": "user", "content": "hi"}])
+    assert calls == ["balance", "paid"]
+
+
+def test_deepseek_balance_floor_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_MIN_BALANCE_CNY", "5.40")
+    monkeypatch.setenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "64")
+    calls: list[str] = []
+
+    def get(url: str, *, headers: dict, timeout: float):
+        calls.append("balance")
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"is_available": True, "balance_infos": [{"currency": "CNY", "total_balance": "6.00"}]},
+        )
+
+    def post(*args, **kwargs):
+        calls.append("paid")
+        raise AssertionError("paid request should not be sent")
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(get=get, post=post, RequestError=Exception))
+    with pytest.raises(RuntimeError, match="too close"):
+        DeepSeekModel(api_key="test-key").complete([{"role": "user", "content": "hi"}])
+    assert calls == ["balance"]
+
+
+def test_deepseek_balance_floor_rejects_large_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_MIN_BALANCE_CNY", "5.40")
+    monkeypatch.setenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "64")
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(RequestError=Exception))
+    with pytest.raises(RuntimeError, match="100 KB"):
+        DeepSeekModel(api_key="test-key").complete([{"role": "user", "content": "x" * 100_000}])
+
+
 def test_deepseek_stops_after_two_empty_responses(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
 

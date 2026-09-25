@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -99,6 +100,12 @@ def main(argv: list[str] | None = None) -> int:
             max_new_tokens=args.max_new_tokens,
         )
     else:
+        if os.getenv("CODEAGENTBENCH_EXECUTOR") != "bwrap":
+            print("DeepSeek runs require CODEAGENTBENCH_EXECUTOR=bwrap to isolate model-generated commands", file=sys.stderr)
+            return 2
+        if "DEEPSEEK_MIN_BALANCE_CNY" not in os.environ:
+            print("DeepSeek runs require DEEPSEEK_MIN_BALANCE_CNY to stop before the spending floor", file=sys.stderr)
+            return 2
         model = DeepSeekModel()
     store = ArtifactStore(args.repo_root)
     run_id = args.run_id or f"{task.instance_id}-{int(time.time())}"

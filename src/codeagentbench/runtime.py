@@ -233,7 +233,7 @@ class AgentRuntime:
         run_id = run_id or f"{task.instance_id}-{int(time.time())}"
         run_dir = self.artifact_store.start_run(run_id, task.instance_id, config)
         journal = ActionJournal(run_dir / "actions.jsonl")
-        executor = BashExecutor(workspace.path, journal)
+        executor = BashExecutor(workspace.path, journal, backend=os.getenv("CODEAGENTBENCH_EXECUTOR", "local"))
         ledger = ledger or BudgetLedger(config.max_tokens, config.max_seconds, config.max_cost_usd, config.max_tool_calls)
         state = RunState(run_id, task.instance_id, status="running", remaining_tokens=config.max_tokens, remaining_seconds=config.max_seconds)
         context = ContextManager(task.issue)

@@ -69,6 +69,18 @@ currency cap.
 Recheck the [official pricing](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)
 before each paid experiment, since rates may change.
 
+Real DeepSeek CLI runs require `CODEAGENTBENCH_EXECUTOR=bwrap`, bubblewrap on
+Linux, `DEEPSEEK_MIN_BALANCE_CNY` (the account balance floor), and
+`DEEPSEEK_MAX_OUTPUT_TOKENS<=1024`. Before each paid request the adapter checks
+the official CNY balance and rejects requests over 100 KB. The sandbox exposes
+only read-only `/usr`, a writable per-run checkout, temporary storage and
+synthetic devices; it does not expose the host's private experiment directory,
+API key, network or `/proc`. This is defense in depth, **not a guaranteed
+financial hard cap**: billing can lag, prices can change, and other users of
+the same account can spend concurrently. For a ¥30 maximum from a ¥35.40
+starting balance, set the floor to ¥5.40 and verify the provider balance after
+each short run.
+
 Security boundary: the current local bash executor checks its starting working
 directory but does **not** confine the shell process to that directory. Model-
 generated commands may access other files visible to the process. Run real

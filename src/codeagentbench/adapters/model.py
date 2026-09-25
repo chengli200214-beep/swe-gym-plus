@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -135,6 +136,35 @@ class DeepSeekModel:
             raise ValueError("DEEPSEEK_THINKING must be enabled or disabled")
         if not self.api_key:
             raise ValueError("DEEPSEEK_API_KEY is required for the API baseline")
+        floor = os.getenv("DEEPSEEK_MIN_BALANCE_CNY")
+        try:
+            self.min_balance_cny = Decimal(floor) if floor is not None else None
+        except InvalidOperation as exc:
+            raise ValueError("DEEPSEEK_MIN_BALANCE_CNY must be a nonnegative number") from exc
+        if self.min_balance_cny is not None:
+            if not self.min_balance_cny.is_finite() or self.min_balance_cny < 0:
+                raise ValueError("DEEPSEEK_MIN_BALANCE_CNY must be a nonnegative number")
+            if self.base_url != "https://api.deepseek.com" or self.model != "deepseek-flash":
+                raise ValueError("CNY balance guard currently supports only the official deepseek-flash API")
+            if self.max_output_tokens > 1024:
+                raise ValueError("CNY balance guard requires DEEPSEEK_MAX_OUTPUT_TOKENS <= 1024")
+
+    def _check_balance(self, httpx: Any) -> None:
+        if self.min_balance_cny is None:
+            return
+        response = httpx.get(
+            f"{self.base_url}/user/balance",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        balances = [entry for entry in payload.get("balance_infos", []) if entry.get("currency") == "CNY"]
+        if not payload.get("is_available") or len(balances) != 1:
+            raise RuntimeError("DeepSeek CNY balance is unavailable; refusing paid request")
+        balance = Decimal(str(balances[0]["total_balance"]))
+        if not balance.is_finite() or balance <= self.min_balance_cny + Decimal("1.00"):
+            raise RuntimeError("DeepSeek CNY balance is too close to the configured floor")
 
     def complete(self, messages: list[dict[str, str]], *, temperature: float = 0.0) -> ModelResponse:
         try:
@@ -155,6 +185,10 @@ class DeepSeekModel:
         for empty_attempt in range(2):
             response = None
             for attempt in range(4):
+                if self.min_balance_cny is not None:
+                    if len(json.dumps(request, ensure_ascii=False).encode("utf-8")) > 100_000:
+                        raise RuntimeError("DeepSeek request exceeds 100 KB guarded input limit")
+                    self._check_balance(httpx)
                 try:
                     response = httpx.post(
                         f"{self.base_url}/chat/completions",

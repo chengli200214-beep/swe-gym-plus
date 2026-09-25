@@ -19,17 +19,23 @@ from codeagentbench.sandbox.workspace import workspace_digest
 class BashExecutor:
     """Execute the same bash-style interface used by mini-swe-agent.
 
-    The runner checks the starting cwd and filters credential-like variables.
-    This is not a sandbox: a shell command can read or write files outside its
-    starting cwd. Real model-generated commands require a separate low-privilege
-    container backend without secrets or private data mounted into it.
+    The legacy local backend checks the starting cwd and filters credential-like
+    variables, but does not isolate the command. The Linux bwrap backend mounts
+    only a per-run checkout and read-only system binaries, clears the child
+    environment, and disables network access. Use bwrap for untrusted commands.
     """
 
-    def __init__(self, workspace: str | Path, journal: ActionJournal | None = None, output_limit: int = 20_000) -> None:
+    def __init__(self, workspace: str | Path, journal: ActionJournal | None = None, output_limit: int = 20_000, *, backend: str = "local") -> None:
+        if backend not in {"local", "bwrap"}:
+            raise ValueError(f"unknown executor backend: {backend}")
         self.workspace = Path(workspace).resolve()
         self.journal = journal
         self.output_limit = output_limit
+        self.backend = backend
         self.bash = shutil.which("bash") or shutil.which("wsl.exe")
+        self.bwrap = shutil.which("bwrap") if backend == "bwrap" else None
+        if backend == "bwrap" and (os.name == "nt" or not self.bwrap):
+            raise RuntimeError("bwrap executor requires bubblewrap on Linux")
 
     def execute(self, intent: ToolIntent, *, intent_already_recorded: bool = False) -> ToolReceipt:
         cwd = Path(intent.cwd).resolve()
@@ -38,7 +44,7 @@ class BashExecutor:
         if self.journal and not intent_already_recorded:
             self.journal.record_intent(intent)
         started = time.monotonic()
-        env = self._tool_environment()
+        env = {"PATH": "/usr/bin:/bin"} if self.backend == "bwrap" else self._tool_environment()
         env["CI"] = "1"
         command_text, temporary_script = self._normalize_command(intent.command)
         use_wsl = bool(self.bash and self._is_wsl_bash() and os.name != "nt")
@@ -52,7 +58,9 @@ class BashExecutor:
         # Native bash does not need a login profile: on hosted workspaces it
         # can print a platform banner into every tool result, wasting context.
         # Keep WSL's existing login behavior for its path/environment setup.
-        if use_native_bash:
+        if self.backend == "bwrap":
+            command = self._bwrap_command(command_text, cwd)
+        elif use_native_bash:
             command = [self.bash, "-c", command_text]
         elif use_wsl:
             command = [self.bash, "-lc", command_text]
@@ -60,7 +68,7 @@ class BashExecutor:
             command = command_text
         try:
             try:
-                result = subprocess.run(command, cwd=cwd, env=env, shell=not (use_wsl or use_native_bash), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=intent.timeout_seconds, check=False)
+                result = subprocess.run(command, cwd=cwd, env=env, shell=not (self.backend == "bwrap" or use_wsl or use_native_bash), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=intent.timeout_seconds, check=False)
                 stdout, stderr = result.stdout, result.stderr
                 receipt = ToolReceipt(intent.action_id, intent.command, result.returncode, stdout[: self.output_limit], stderr[: self.output_limit], time.monotonic() - started, False, workspace_digest(self.workspace))
             except subprocess.TimeoutExpired as exc:
@@ -74,6 +82,31 @@ class BashExecutor:
         if self.journal:
             self.journal.record_receipt(receipt)
         return receipt
+
+    def _bwrap_command(self, command_text: str, cwd: Path) -> list[str]:
+        """Expose only system binaries and this run's checkout to an untrusted shell."""
+
+        assert self.bwrap is not None
+        relative = cwd.relative_to(self.workspace)
+        sandbox_cwd = "/workspace" if relative == Path(".") else "/workspace/" + relative.as_posix()
+        return [
+            self.bwrap,
+            "--unshare-user", "--unshare-pid", "--unshare-net",
+            "--die-with-parent", "--new-session", "--cap-drop", "ALL",
+            "--ro-bind", "/usr", "/usr",
+            "--symlink", "usr/bin", "/bin",
+            "--symlink", "usr/lib", "/lib",
+            "--symlink", "usr/lib64", "/lib64",
+            "--dev", "/dev", "--tmpfs", "/tmp",
+            "--bind", str(self.workspace), "/workspace",
+            "--chdir", sandbox_cwd,
+            "--clearenv", "--setenv", "PATH", "/usr/bin:/bin",
+            "--setenv", "HOME", "/tmp",
+            "--setenv", "TMPDIR", "/tmp",
+            "--setenv", "CI", "1",
+            "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
+            "--", "/usr/bin/bash", "-c", command_text,
+        ]
 
     @staticmethod
     def _normalize_command(command: str) -> tuple[str, str | None]:
