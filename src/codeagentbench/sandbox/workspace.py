@@ -171,7 +171,9 @@ class WorkspaceManager:
     def _archive_remote_snapshot(repo: str, base_commit: str, target: Path) -> None:
         if "://" not in repo and not repo.startswith("git@"):
             revision = base_commit if base_commit not in {"", "local", "HEAD"} else "HEAD"
-            archive_url = f"https://github.com/{repo}/archive/{revision}.tar.gz"
+            # Use GitHub's official archive host directly; some cloud networks
+            # stall on github.com redirects even when codeload is reachable.
+            archive_url = f"https://codeload.github.com/{repo}/tar.gz/{revision}"
             try:
                 request = Request(archive_url, headers={"User-Agent": "CodeAgentBench/0.1"})
                 with urlopen(request, timeout=120.0) as response:  # noqa: S310 - URL is built from a dataset repo id
