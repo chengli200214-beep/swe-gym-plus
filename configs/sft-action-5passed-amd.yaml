@@ -8,7 +8,7 @@ epochs: 1
 learning_rate: 0.0001
 per_device_batch_size: 1
 gradient_accumulation_steps: 1
-max_seq_len: 2048
+max_seq_len: 3072
 gradient_checkpointing: false
 load_in_4bit: false
 bnb_quant_type: nf4
@@ -20,7 +20,7 @@ seed: 42
 logging_steps: 5
 optim: adamw_torch
 oom_ladder:
-  - max_seq_len: 2048
+  - max_seq_len: 3072
     gradient_accumulation_steps: 1
-  - max_seq_len: 1024
+  - max_seq_len: 2048
     gradient_accumulation_steps: 2
