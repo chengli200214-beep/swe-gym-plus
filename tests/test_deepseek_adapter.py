@@ -5,6 +5,23 @@ from types import SimpleNamespace
 
 import pytest
 
+
+def test_unknown_transport_outcome_does_not_retry(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from codeagentbench.adapters.model import DeepSeekModel
+    calls = []
+    class TransportError(Exception):
+        pass
+    def post(*args, **kwargs):
+        calls.append(1)
+        raise TransportError("read timeout")
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(post=post, RequestError=TransportError))
+    monkeypatch.delenv("DEEPSEEK_MIN_BALANCE_CNY", raising=False)
+    with pytest.raises(RuntimeError, match="outcome unknown"):
+        DeepSeekModel(api_key="test").complete([{"role": "user", "content": "fix"}])
+    assert len(calls) == 1
+
 from codeagentbench.adapters.model import DeepSeekModel
 
 

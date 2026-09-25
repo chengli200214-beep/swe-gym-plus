@@ -167,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.resume:
         metadata = json.loads((store.run_dir(run_id) / "run.json").read_text(encoding="utf-8"))
+        if metadata["config"]["model"] != config.model:
+            parser.error("resume model differs from original run")
         config = RunConfig(**metadata["config"])
     cancelled = False
     def request_cancel(signum, frame):
