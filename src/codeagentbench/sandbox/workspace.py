@@ -125,7 +125,15 @@ class WorkspaceManager:
                     self._init_local_repo(staging, "local")
             else:
                 self._archive_remote_snapshot(task.repo, task.base_commit, staging)
-            staging.replace(cached)
+            try:
+                staging.replace(cached)
+            except FileExistsError:
+                # Another process may have completed the same immutable
+                # snapshot while this one was building. The atomic rename
+                # makes the winner safe to reuse.
+                if cached.is_dir() and (cached / ".git").is_dir():
+                    return cached
+                raise
             return cached
         finally:
             shutil.rmtree(staging_parent, ignore_errors=True)

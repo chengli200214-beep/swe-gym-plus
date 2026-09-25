@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,21 @@ ROOT = Path(__file__).parents[1]
 def demo_task() -> TaskRecord:
     manifest = load_manifest(ROOT / "data/manifests/demo.json")
     return manifest.tasks[0]
+
+
+def test_snapshot_cache_reuses_concurrent_winner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = WorkspaceManager(tmp_path / "workspaces")
+    original_replace = Path.replace
+
+    def competing_replace(source: Path, target: Path) -> Path:
+        if source.name == "snapshot":
+            shutil.copytree(source, target)
+            raise FileExistsError(target)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", competing_replace)
+    workspace = manager.create(demo_task(), "concurrent-winner")
+    assert (workspace.path / ".git").is_dir()
 
 
 def test_agent_view_does_not_leak_gold_patch() -> None:

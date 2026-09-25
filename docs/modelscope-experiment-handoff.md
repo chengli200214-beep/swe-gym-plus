@@ -1,6 +1,21 @@
-# ModelScope 云端实验接续记录（2026-09-23）
+# ModelScope 云端实验接续记录（更新至 2026-09-25）
 
 本记录只写入已核实的状态和复现入口，不包含 API key 或原始轨迹。项目早期的 SFT v4 报告见 [`comparison.md`](../experiments/sft-v0/evaluation/comparison.md)；报告中的 6 条训练轨迹和 3B LoRA checkpoint **不在当前公开仓库或本次 ModelScope 工作区中**，不能仅凭报告宣称已在此实例复现训练。
+
+## 2026-09-25：五样本 SFT 的首次有效留出对照
+
+在已保存的五样本 Qwen2.5-Coder-0.5B-Instruct LoRA 上，使用云端本地基座模型与 LoRA 适配器分别运行两个不在这五条训练数据中的 getmoto 任务。运行代码为 `b512dc9`；共同预算为 8 步、12 次工具调用、16,000 总 token、600 秒、单次最多 512 新 token。均使用同一 SWE-Gym manifest、相同独立评测流程和已补齐的测试依赖，无需 DeepSeek API。原始运行目录位于 `/mnt/workspace/swe-gym-plus/experiments/base-sft-5passed/`，仍只保存在 ModelScope 工作区，**没有公开上传轨迹或权重**。
+
+| 留出任务 | 质量控制：未修复 / 官方补丁 | Base 运行 ID 与独立评测 | SFT 运行 ID 与独立评测 |
+|---|---|---|---|
+| `getmoto__moto-5876` | 1 failed / 2 passed；3 passed，准入 | `compare-5876-base-valid-20260925`：1 failed / 2 passed | `compare-5876-sft-20260925`：1 failed / 2 passed |
+| `getmoto__moto-5085` | 1 failed / 77 passed；78 passed，准入 | `compare-5085-base-valid-20260925`：1 failed / 77 passed | `compare-5085-sft-20260925`：1 failed / 77 passed |
+
+四次有效运行的 Agent 状态虽然都是 `completed`，却都在第 1 步结束、**0 次工具调用、0 字节补丁**，独立评测均为 `failed`。Base 与 SFT 的任务解决数同为 **0/2**；这只说明本次极小样本训练未在这两个任务上体现改善，不能推断一般化解决率。轨迹中的模型回复有直接宣称完成、却未执行工具的情况，因此 `completed` 绝不等于解决任务。
+
+新实例最初缺少 `sure`、`python-jose[cryptography]`、`responses`、`xmltodict`、`freezegun`、`pytz` 等 Moto 测试依赖；依赖缺失时的 `compare-5876-base-20260925` 收集失败，不计入对照。并行创建 `5085` 工作区时还触发仓库快照缓存的 `FileExistsError`；报错的 `compare-5085-base-20260925` 同样不计入对照，串行重跑成功。仓库代码已修复同任务并发快照的竞争，加入回归测试；在本地完整测试套件通过后才提交。云端 worktree 在下次拉取新提交前仍是旧代码。
+
+下一轮应先检查训练数据中的工具动作监督格式和本地模型首步输出，再扩大不同任务的真实通过轨迹，并在固定留出集上复测；不要把五样本训练或 `0/2` 包装成 SFT 提升。若换用更大的模型或重新训练，需单独记录模型、数据、预算和显卡配置，不能与本轮混为同一次实验。
 
 ## 最新进展：5 条通过轨迹与云端 SFT
 
