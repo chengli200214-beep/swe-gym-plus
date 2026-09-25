@@ -67,3 +67,16 @@ def test_quality_reports_unavailable_isolation_without_admission(monkeypatch, tm
     report = run_controls(task, timeout=1, cache_root=tmp_path / "cache")
     assert report.admitted is False
     assert all(control.reason == "isolated test unavailable" for control in report.controls)
+
+
+def test_quality_rejects_collection_error_even_if_gold_passes(monkeypatch, tmp_path: Path) -> None:
+    from codeagentbench.tasks.manifest import load_manifest
+    from codeagentbench.tasks.quality import run_controls
+
+    task = load_manifest(Path(__file__).parents[1] / "data/manifests/demo.json").tasks[0]
+    calls = iter(((4, "collection failed", "", 0.1), (0, "passed", "", 0.1)))
+    monkeypatch.setattr("codeagentbench.tasks.quality._run_tests", lambda *args, **kwargs: next(calls))
+    report = run_controls(task, timeout=1, cache_root=tmp_path / "cache")
+    assert report.admitted is False
+    assert report.controls[0].reason == "test runner did not complete normally"
+    assert report.controls[1].observed_pass is True

@@ -101,7 +101,10 @@ def run_controls(task: TaskRecord, *, timeout: float = 600.0, cache_root: str | 
                 controls.append(ControlResult(name, None, expected_pass, False, "", str(exc), 0.0, "isolated test unavailable"))
                 continue
             observed = exit_code == 0
-            controls.append(ControlResult(name, exit_code, expected_pass, observed, stdout, stderr, duration))
-    admitted = len(controls) == 2 and all(item.observed_pass == item.expected_pass for item in controls)
+            failure_reason = "" if exit_code in (0, 1) else "test runner did not complete normally"
+            controls.append(ControlResult(name, exit_code, expected_pass, observed, stdout, stderr, duration, failure_reason))
+    admitted = len(controls) == 2 and all(
+        item.observed_pass == item.expected_pass and not item.reason for item in controls
+    )
     reason = "" if admitted else "control expectation mismatch"
     return QualityReport(task.instance_id, admitted, tuple(controls), reason)
