@@ -80,6 +80,11 @@ financial hard cap**: billing can lag, prices can change, and other users of
 the same account can spend concurrently. For a ¥30 maximum from a ¥35.40
 starting balance, set the floor to ¥5.40 and verify the provider balance after
 each short run.
+Use `run ... --skip-evaluation` for a paid DeepSeek rollout, then exit that
+process and run `evaluate-run MANIFEST RUN_ID --repo-root ROOT` in a **new
+process without `DEEPSEEK_API_KEY`**. Formal tests also use bubblewrap when
+`CODEAGENTBENCH_EXECUTOR=bwrap`; do not execute candidate code in a process
+that still has model credentials.
 
 Security boundary: the current local bash executor checks its starting working
 directory but does **not** confine the shell process to that directory. Model-

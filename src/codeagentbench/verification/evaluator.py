@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
 from pathlib import Path
 
-from codeagentbench.models import Candidate, EvaluationResult, TaskRecord, Verdict
+from codeagentbench.models import Candidate, EvaluationResult, TaskRecord, ToolIntent, Verdict
+from codeagentbench.sandbox.executor import BashExecutor
 from codeagentbench.sandbox.workspace import WorkspaceManager
 
 
@@ -61,9 +63,17 @@ class Evaluator:
         if remaining_seconds <= 0:
             return EvaluationResult(Verdict.BLOCKED, None, None, None, duration_seconds=time.monotonic() - started, reason="formal evaluation preparation exhausted time budget")
         try:
-            result = subprocess.run(spec.test_command, cwd=workspace.path, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=remaining_seconds, check=False)
-            exit_code = result.returncode
-            stdout, stderr = result.stdout, result.stderr
+            if os.getenv("CODEAGENTBENCH_EXECUTOR") == "bwrap":
+                receipt = BashExecutor(workspace.path, output_limit=200_000, backend="bwrap").execute(
+                    ToolIntent("formal-evaluation", spec.test_command, str(workspace.path), remaining_seconds)
+                )
+                if receipt.timed_out:
+                    return EvaluationResult(Verdict.BLOCKED, None, None, None, stdout=receipt.stdout, stderr=receipt.stderr, duration_seconds=time.monotonic() - started, reason="formal test timed out")
+                exit_code, stdout, stderr = receipt.exit_code, receipt.stdout, receipt.stderr
+            else:
+                result = subprocess.run(spec.test_command, cwd=workspace.path, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=remaining_seconds, check=False)
+                exit_code = result.returncode
+                stdout, stderr = result.stdout, result.stderr
         except subprocess.TimeoutExpired as exc:
             return EvaluationResult(Verdict.BLOCKED, None, None, None, stdout=str(exc.stdout or ""), stderr=str(exc.stderr or ""), duration_seconds=time.monotonic() - started, reason="formal test timed out")
         combined = stdout + "\n" + stderr

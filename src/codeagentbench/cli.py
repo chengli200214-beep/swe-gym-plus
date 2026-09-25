@@ -41,6 +41,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--max-tokens", type=int, default=16000)
     run.add_argument("--max-seconds", type=float, default=600.0)
     run.add_argument("--max-cost-usd", type=float, default=5.0)
+    run.add_argument("--skip-evaluation", action="store_true", help="generate a candidate only; evaluate later in a credential-free process")
+    evaluate_run = sub.add_parser("evaluate-run")
+    evaluate_run.add_argument("manifest", type=Path)
+    evaluate_run.add_argument("run_id")
+    evaluate_run.add_argument("--repo-root", type=Path, default=Path("artifacts"))
     quality = sub.add_parser("quality-check")
     quality.add_argument("manifest", type=Path)
     quality.add_argument("task_id")
@@ -83,6 +88,30 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps({"output": str(args.output), "exported": exported}))
         return 0 if exported else 1
+    if args.command == "evaluate-run":
+        if os.getenv("DEEPSEEK_API_KEY"):
+            print("evaluation must run without DEEPSEEK_API_KEY in its process environment", file=sys.stderr)
+            return 2
+        if os.getenv("CODEAGENTBENCH_EXECUTOR") != "bwrap":
+            print("evaluate-run requires CODEAGENTBENCH_EXECUTOR=bwrap for candidate test isolation", file=sys.stderr)
+            return 2
+        summary_path = args.repo_root / "runs" / args.run_id / "summary.json"
+        if not summary_path.is_file():
+            print(f"missing run summary: {summary_path}", file=sys.stderr)
+            return 2
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        manifest = load_manifest(args.manifest)
+        task = next((item for item in manifest.tasks if item.instance_id == summary.get("task_id")), None)
+        if task is None:
+            print("run task is absent from the manifest", file=sys.stderr)
+            return 2
+        from codeagentbench.verification.evaluator import Evaluator
+
+        candidate = Candidate("candidate-0", args.run_id, str(summary.get("diff") or ""), str(summary.get("status") or "unknown"))
+        evaluation = Evaluator(args.repo_root / "evaluations").evaluate(task, candidate)
+        ArtifactStore(args.repo_root).append_event(args.run_id, {"type": "evaluation", **evaluation.to_dict()})
+        print(json.dumps({"run_id": args.run_id, "evaluation": evaluation.to_dict()}, ensure_ascii=False))
+        return 0 if evaluation.passed else 1
     manifest = load_manifest(args.manifest)
     task = next((item for item in manifest.tasks if item.instance_id == args.task_id), None)
     if task is None:
@@ -100,6 +129,9 @@ def main(argv: list[str] | None = None) -> int:
             max_new_tokens=args.max_new_tokens,
         )
     else:
+        if not args.skip_evaluation:
+            print("DeepSeek runs require --skip-evaluation; run evaluate-run later without the API key", file=sys.stderr)
+            return 2
         if os.getenv("CODEAGENTBENCH_EXECUTOR") != "bwrap":
             print("DeepSeek runs require CODEAGENTBENCH_EXECUTOR=bwrap to isolate model-generated commands", file=sys.stderr)
             return 2
@@ -120,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
         max_cost_usd=args.max_cost_usd,
     )
     result = AgentRuntime(store).run(task, workspace, model, config, run_id=workspace.run_id)
+    if args.skip_evaluation:
+        print(json.dumps({"run_id": result.run_id, "status": result.status, "diff_present": bool(result.diff), "evaluation": None}, ensure_ascii=False))
+        return 0
     candidate = Candidate("candidate-0", result.run_id, result.diff, result.status, visible_test_passed=result.visible_test_passed)
     from codeagentbench.verification.evaluator import Evaluator
 
