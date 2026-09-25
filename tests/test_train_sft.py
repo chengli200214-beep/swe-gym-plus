@@ -145,6 +145,7 @@ def test_long_opening_turn_keeps_a_supervised_tail() -> None:
 
 
 def test_collator_pads_inputs_and_masks_padding_from_the_loss() -> None:
+    pytest.importorskip("torch")
     collator = train_sft.SupervisedCollator(StubTokenizer.pad_token_id)
 
     batch = collator([
@@ -158,7 +159,7 @@ def test_collator_pads_inputs_and_masks_padding_from_the_loss() -> None:
 
 
 def test_training_refuses_to_fall_back_to_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
-    import torch
+    torch = pytest.importorskip("torch")
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
