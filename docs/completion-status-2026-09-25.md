@@ -4,7 +4,7 @@
 
 ## 当前证据
 
-- 本地/GitHub 与云端新工作树 `/mnt/workspace/swe-gym-plus-next` 已同步到 `e134f9c`；沙箱与 CLI 定向测试通过。旧工作树 `/mnt/workspace/swe-gym-plus-current` 保留不动。后续命令必须明确使用新工作树，不要覆盖旧工作树或私有实验目录。
+- 本地/GitHub 与云端新工作树 `/mnt/workspace/swe-gym-plus-next` 已同步到 `aada7f9`；本地 74 项测试通过、1 项跳过，GitHub 无密钥/GPU CI 通过。旧工作树 `/mnt/workspace/swe-gym-plus-current` 保留不动。后续命令必须明确使用新工作树，不要覆盖旧工作树或私有实验目录。
 - 当前云端 5 个不同 Moto 任务的独立评测通过轨迹产生 46 个相关的动作样本；0.5B BF16 LoRA 训练 1 epoch/46 steps。两项开发任务 `5876`、`5085` 的 Base/SFT 对照仍是 0/2，对解决率提升没有证据。详情与路径见 [ModelScope 交接记录](modelscope-experiment-handoff.md)。
 - 早期 3B QLoRA v4 报告属于另一批实验；报告中的原始数据和权重不在当前公开仓库或 ModelScope 工作区。特别是 `moto-4950` 已被该实验用于训练，不能再作为继承该权重的盲测任务。
 - 云端使用本次新分组脚本核查了现有 `train-actions-5passed.jsonl`：46 条训练样本未包含非训练任务；这不是新增轨迹或泛化评测。新增准入检查 `getmoto__moto-6641`：未修复版 1 failed / 6 passed，官方补丁版 7 passed，故可作为后续训练采样候选；尚无它的 Agent 成功轨迹。完整控制报告保存在私有 `/mnt/workspace/swe-gym-plus/experiments/quality/moto-6641-20260925.json`，没有上传公开仓库。
@@ -21,11 +21,11 @@
 | E 数据审计 | 动作级转换、来源收据与长度审计已有首轮记录。 | 新增数据仍须逐条核对来源、去重、污染、噪声、结束动作及 tokenizer 截断。 |
 | F 训练 | 0.5B BF16 LoRA 小样本链路已在云端完成。 | 数据规模不足以做正式 3B 训练；Harness 变化后尚未做配对 Base 重跑和正式训练。 |
 | G 评测 | 两个开发任务上 0/2 且失败原因已记录。 | 没有足够的冻结盲测集、配对置信区间或可靠的模型能力提升证据。 |
-| H 交付 | 代码、配置和实验交接文档已有公开记录。 | CI、完整复现脚本、部署演示和经证据审查的简历表述尚待完成。 |
+| H 交付 | 代码、配置、实验交接文档和无密钥/GPU 的 GitHub 单元测试 CI 已有公开记录，CI 首轮依赖/竞态问题修复后通过。 | 完整复现脚本、部署演示和经证据审查的简历表述尚待完成。 |
 
 ## 下一轮执行顺序
 
-1. 云端实验从 `/mnt/workspace/swe-gym-plus-next` 的 `e134f9c` 继续；旧工作树保留不动，私有 `experiments/` 仍在 `/mnt/workspace/swe-gym-plus/`。
+1. 云端实验从 `/mnt/workspace/swe-gym-plus-next` 的 `aada7f9` 继续；旧工作树保留不动，私有 `experiments/` 仍在 `/mnt/workspace/swe-gym-plus/`。
 2. 在不调用付费 API 的条件下继续 Harness/服务测试与故障注入，并审核 bubblewrap 对更多任务的兼容性；不要把余额保护线称为硬性消费上限。
 3. 下一次付费 rollout 需另行确认。若继续 `moto-6641`，可适度提高 token/步数上限，使用新的 run ID，然后在无密钥进程里运行 `evaluate-run`；只把独立评测通过的、不同任务轨迹纳入训练。
 4. 达到足够的不同任务数据且冻结足量未污染盲测集后，再训练 3B 并跑同预算 Base/SFT 配对评测。
