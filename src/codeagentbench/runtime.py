@@ -67,6 +67,14 @@ _EDIT_COMMAND_FENCE = re.compile(
     r"(?:\*\*)?edit\s+command[\s*]*:[\s*]*```(?:bash|sh|shell)?\s*(.*?)\s*```",
     flags=re.DOTALL | re.IGNORECASE,
 )
+_TEST_RUNNER = re.compile(r"(?:^|[;&|]\s*)(?:python(?:3)?\s+-m\s+)?(?:pytest|unittest|tox)(?:\s|$)", re.IGNORECASE)
+
+
+def _is_visible_test_run(command: str) -> bool:
+    """Conservatively identify a real test run, not a filename or version check."""
+    return bool(_TEST_RUNNER.search(command)) and not any(
+        flag in command for flag in ("--version", "--help", "--collect-only")
+    )
 
 
 @dataclass(frozen=True)
@@ -243,6 +251,7 @@ class AgentRuntime:
         previous_signature = ""
         repeated = 0
         visible_test_passed = False
+        tested_diff: str | None = None
         self._checkpoint(state, ledger, workspace, messages)
         try:
             for step in range(config.max_steps):
@@ -256,7 +265,7 @@ class AgentRuntime:
                 except ValueError as exc:
                     if visible_test_passed and workspace.diff():
                         # A model may emit a malformed follow-up after it has
-                        # already produced and tested a patch. Preserve the
+                        # already produced and visibly tested a patch. Preserve the
                         # candidate for independent evaluation, but keep the
                         # protocol warning in the durable summary.
                         state.status = "completed"
@@ -266,9 +275,12 @@ class AgentRuntime:
                     break
                 if action.done:
                     state.status = "completed"
+                    if workspace.diff() and not visible_test_passed:
+                        state.failure_reason = "unverified: no recognized passing post-edit visible test"
                     break
                 action_id = f"{run_id}-action-{step:04d}"
                 pre_digest = workspace.digest
+                pre_diff = workspace.diff()
                 intent = ToolIntent(action_id, action.command, str(workspace.path), min(120.0, config.max_seconds), True, action_id, pre_digest)
                 state.pending_action_id = action_id
                 journal.record_intent(intent)
@@ -279,8 +291,15 @@ class AgentRuntime:
                 ledger.consume(seconds=receipt.duration_seconds, tool_calls=1)
                 state.pending_action_id = None
                 state.last_action_id = action_id
-                if receipt.exit_code == 0 and any(token in action.command.lower() for token in ("pytest", "tox", "unittest", "test")):
-                    visible_test_passed = True
+                if (
+                    receipt.exit_code == 0
+                    and not receipt.timed_out
+                    and pre_diff
+                    and pre_diff == workspace.diff()
+                    and _is_visible_test_run(action.command)
+                ):
+                    tested_diff = pre_diff
+                visible_test_passed = bool(tested_diff and tested_diff == workspace.diff())
                 if receipt.stdout:
                     # Keep a bounded, recent slice of successful exploration
                     # output so compression does not make the model repeat
@@ -371,7 +390,7 @@ class AgentRuntime:
         state.pending_action_id = None if state.status != "interrupted" else state.pending_action_id
         self._checkpoint(state, ledger, workspace, messages)
         result = RuntimeResult(run_id, state.status, workspace.diff(), state.step + 1, state.failure_reason, state, visible_test_passed)
-        self.artifact_store.save_summary(run_id, {"run_id": run_id, "task_id": task.instance_id, "status": state.status, "diff": result.diff, "steps": result.steps, "failure_reason": result.failure_reason, "budget": asdict(snapshot)})
+        self.artifact_store.save_summary(run_id, {"run_id": run_id, "task_id": task.instance_id, "status": state.status, "diff": result.diff, "steps": result.steps, "failure_reason": result.failure_reason, "visible_test_passed": result.visible_test_passed, "budget": asdict(snapshot)})
         return result
 
     def recover(self, run_id: str, workspace: Workspace) -> list[dict[str, str]]:
@@ -415,7 +434,10 @@ class AgentRuntime:
             "The harness has already prepared this workspace from the requested base commit; do not run "
             "git checkout, git fetch, git reset, or otherwise switch revisions before inspecting the files. "
             'Return exactly JSON: {"command":"...", "done":false, "message":"..."}. '
-            "Set done=true only after testing. Do not reveal or ask for gold patches. "
+            "Set done=true only after a post-edit visible test or direct smoke check. "
+            "The harness marks patches without a recognized passing post-edit test as unverified; "
+            "a direct smoke check may not receive that flag. Only independent evaluation determines success. "
+            "Do not reveal or ask for gold patches. "
             "Use a short observe-edit-test loop: after at most 3 exploration commands, "
             "read the exact implementation lines and apply the smallest patch; do not repeat "
             "directory listings or commands whose output you already have. If a shell command "
@@ -427,7 +449,7 @@ class AgentRuntime:
             "worked. Before testing, inspect the import section of every edited file and make "
             "sure each newly referenced name is defined or imported. If the allowed test target "
             "is unavailable, run a small direct smoke check of the changed code path. Run the allowed test "
-            "command before finishing. If an allowed test target or test class is absent from the "
+            "command if one is provided before finishing. If a test target or test class is absent from the "
             "checkout, treat it as a hidden evaluation test and implement the issue from the "
             "problem statement instead of spending more actions searching for it. Do not finish "
             "without a concrete diff unless the issue is proven unrelated to the repository."

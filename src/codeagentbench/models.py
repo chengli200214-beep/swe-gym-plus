@@ -108,7 +108,7 @@ class TaskRecord:
         )
 
     def agent_view(self) -> AgentTaskView:
-        """Return a view without gold patch or evaluation-only labels."""
+        """Return public task context without evaluator-only tests or labels."""
 
         public_context = self.metadata.get("context") or self.metadata.get("hints_text", "")
         return AgentTaskView(
@@ -116,8 +116,10 @@ class TaskRecord:
             repo=self.repo,
             base_commit=self.base_commit,
             issue=self.issue,
-            test_patch=self.eval_spec.test_patch,
-            allowed_test_command=self.eval_spec.test_command,
+            # A manifest's test patch and test command belong to the sealed
+            # evaluator. Only a separately curated visible command may be
+            # shown to the agent; it must not be derived from EvalSpec.
+            allowed_test_command=str(self.metadata.get("agent_test_command") or ""),
             context=str(public_context),
         )
 

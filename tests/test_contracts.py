@@ -44,10 +44,22 @@ def test_snapshot_cache_reuses_concurrent_winner(tmp_path: Path, monkeypatch: py
 
 
 def test_agent_view_does_not_leak_gold_patch() -> None:
-    task = TaskRecord("x", "repo", "abc", "fix", eval_spec=EvalSpec(gold_patch="SECRET-GOLD"))
+    task = TaskRecord(
+        "x", "repo", "abc", "fix",
+        eval_spec=EvalSpec(
+            gold_patch="SECRET-GOLD",
+            test_patch="SECRET-TEST-PATCH",
+            test_command="python -m pytest SECRET-HIDDEN-TEST",
+        ),
+        metadata={"agent_test_command": "python -m pytest tests/test_visible.py"},
+    )
     view = task.agent_view().to_dict()
     assert "gold_patch" not in view
     assert "SECRET-GOLD" not in json.dumps(view)
+    assert "SECRET-TEST-PATCH" not in json.dumps(view)
+    assert "SECRET-HIDDEN-TEST" not in json.dumps(view)
+    assert view["allowed_test_command"] == "python -m pytest tests/test_visible.py"
+    assert TaskRecord("y", "repo", "abc", "fix", eval_spec=task.eval_spec).agent_view().allowed_test_command == ""
 
 
 def test_system_prompt_requires_new_symbol_import_check() -> None:
@@ -217,9 +229,51 @@ def test_runtime_produces_real_diff_and_checkpoint(tmp_path: Path) -> None:
         run_id="run-1",
     )
     assert result.status == "completed"
+    assert result.visible_test_passed is True
     assert "left + right" in result.diff
     assert (tmp_path / "artifacts/runs/run-1/checkpoint.json").exists()
     assert (tmp_path / "artifacts/runs/run-1/actions.jsonl").exists()
+
+
+def test_completion_without_post_edit_test_is_unverified(tmp_path: Path) -> None:
+    task = demo_task()
+    workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "untested")
+    result = AgentRuntime(ArtifactStore(tmp_path / "artifacts")).run(
+        task,
+        workspace,
+        ScriptedModel([
+            {"command": "python -c \"from pathlib import Path; p=Path('src/calculator.py'); p.write_text(p.read_text().replace('left - right', 'left + right'))\""},
+            {"command": "python -m pytest --version"},
+            {"done": True},
+        ]),
+        RunConfig(max_steps=4, max_seconds=60, max_tool_calls=4),
+        run_id="untested",
+    )
+    summary = json.loads((tmp_path / "artifacts/runs/untested/summary.json").read_text())
+    assert result.status == "completed"
+    assert result.visible_test_passed is False
+    assert "unverified" in result.failure_reason
+    assert summary["visible_test_passed"] is False
+
+
+def test_edit_after_passing_test_invalidates_visible_verification(tmp_path: Path) -> None:
+    task = demo_task()
+    workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "edited-after-test")
+    result = AgentRuntime(ArtifactStore(tmp_path / "artifacts")).run(
+        task,
+        workspace,
+        ScriptedModel([
+            {"command": "python -c \"from pathlib import Path; p=Path('src/calculator.py'); p.write_text(p.read_text().replace('left - right', 'left + right'))\""},
+            {"command": "python -m pytest -q"},
+            {"command": "python -c \"from pathlib import Path; p=Path('src/calculator.py'); p.write_text(p.read_text() + '# late edit\\n')\""},
+            {"done": True},
+        ]),
+        RunConfig(max_steps=5, max_seconds=60, max_tool_calls=5),
+        run_id="edited-after-test",
+    )
+    assert result.status == "completed"
+    assert result.visible_test_passed is False
+    assert "unverified" in result.failure_reason
 
 
 def test_no_patch_checkpoint_survives_context_compression(tmp_path: Path) -> None:
