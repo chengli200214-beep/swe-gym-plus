@@ -30,6 +30,16 @@ def action_examples(row: dict[str, Any], *, system_prompt: str, context_chars: i
     issue = str(messages[0].get("content", ""))
     if not issue:
         raise ValueError(f"{run_id}: empty task prompt")
+    try:
+        task_prompt = json.loads(issue)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{run_id}: task prompt is not auditable JSON") from exc
+    if not isinstance(task_prompt, dict) or task_prompt.get("instance_id") != task_id:
+        raise ValueError(f"{run_id}: task prompt does not match source task")
+    if task_prompt.get("allowed_test_command"):
+        raise ValueError(f"{run_id}: task prompt exposes an evaluator test command")
+    if task_prompt.get("test_patch") or task_prompt.get("gold_patch"):
+        raise ValueError(f"{run_id}: task prompt exposes evaluator-only patches")
     latest_tool = ""
     examples: list[dict[str, Any]] = []
     for message in messages[1:]:
@@ -93,6 +103,7 @@ def prepare(source: Path, output: Path, *, context_chars: int = 800) -> dict[str
         "distinct_tasks": len(seen_tasks),
         "action_examples": len(examples),
         "context_chars": context_chars,
+        "blind_prompt_checked": True,
     }
     output.with_suffix(".receipt.json").write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return receipt

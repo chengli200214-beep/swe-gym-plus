@@ -14,7 +14,7 @@ def _row() -> dict:
         "run_id": "run-1",
         "evaluation_verdict": "passed",
         "messages": [
-            {"role": "user", "content": "Fix the function"},
+            {"role": "user", "content": json.dumps({"instance_id": "task-1", "issue": "Fix the function", "allowed_test_command": ""})},
             {"role": "assistant", "content": '<command>rg "function" src</command>'},
             {"role": "tool", "content": "x" * 100 + "useful tail"},
             {"role": "assistant", "content": '{"command":"python -m pytest -q","done":false,"message":"test"}'},
@@ -43,6 +43,7 @@ def test_prepare_requires_passed_unique_sources(tmp_path: Path) -> None:
     receipt = prepare(source, output)
     assert receipt["distinct_tasks"] == 1
     assert receipt["action_examples"] == 2
+    assert receipt["blind_prompt_checked"] is True
     assert len(output.read_text(encoding="utf-8").splitlines()) == 2
     assert output.with_suffix(".receipt.json").exists()
 
@@ -51,4 +52,22 @@ def test_prepare_requires_passed_unique_sources(tmp_path: Path) -> None:
         prepare(source, output)
     row["evaluation_verdict"] = "failed"
     with pytest.raises(ValueError, match="passed independent evaluation"):
+        action_examples(row, system_prompt="Return JSON")
+
+
+def test_action_examples_reject_historical_evaluator_command() -> None:
+    row = _row()
+    row["messages"][0]["content"] = json.dumps({
+        "instance_id": "task-1",
+        "issue": "Fix the function",
+        "allowed_test_command": "python -m pytest -q tests/hidden_test.py::test_gold",
+    })
+    with pytest.raises(ValueError, match="exposes an evaluator test command"):
+        action_examples(row, system_prompt="Return JSON")
+
+
+def test_action_examples_reject_unverifiable_prompt() -> None:
+    row = _row()
+    row["messages"][0]["content"] = "Fix the function"
+    with pytest.raises(ValueError, match="not auditable JSON"):
         action_examples(row, system_prompt="Return JSON")
