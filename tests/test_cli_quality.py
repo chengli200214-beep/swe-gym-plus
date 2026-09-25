@@ -52,3 +52,18 @@ def test_quality_bwrap_uses_isolated_executor(tmp_path: Path, monkeypatch) -> No
     assert seen["backend"] == "bwrap"
     assert seen["approved_cache_root"] == tmp_path / ".repo_cache"
     assert seen["intent"].cwd == str(tmp_path)
+
+
+def test_quality_reports_unavailable_isolation_without_admission(monkeypatch, tmp_path: Path) -> None:
+    from codeagentbench.tasks.manifest import load_manifest
+    from codeagentbench.tasks.quality import run_controls
+
+    task = load_manifest(Path(__file__).parents[1] / "data/manifests/demo.json").tasks[0]
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("bwrap executor requires bubblewrap on Linux")
+
+    monkeypatch.setattr("codeagentbench.tasks.quality._run_tests", unavailable)
+    report = run_controls(task, timeout=1, cache_root=tmp_path / "cache")
+    assert report.admitted is False
+    assert all(control.reason == "isolated test unavailable" for control in report.controls)

@@ -95,7 +95,11 @@ def run_controls(task: TaskRecord, *, timeout: float = 600.0, cache_root: str | 
             if not test_ok:
                 controls.append(ControlResult(name, None, expected_pass, False, "", patch_error, 0.0, "patch failed"))
                 continue
-            exit_code, stdout, stderr, duration = _run_tests(workspace.path, spec.test_command, timeout, cache_root=approved_cache_root or manager.cache_root)
+            try:
+                exit_code, stdout, stderr, duration = _run_tests(workspace.path, spec.test_command, timeout, cache_root=approved_cache_root or manager.cache_root)
+            except RuntimeError as exc:
+                controls.append(ControlResult(name, None, expected_pass, False, "", str(exc), 0.0, "isolated test unavailable"))
+                continue
             observed = exit_code == 0
             controls.append(ControlResult(name, exit_code, expected_pass, observed, stdout, stderr, duration))
     admitted = len(controls) == 2 and all(item.observed_pass == item.expected_pass for item in controls)
