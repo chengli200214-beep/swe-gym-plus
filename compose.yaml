@@ -4,9 +4,9 @@ services:
     environment:
       POSTGRES_DB: codeagentbench
       POSTGRES_USER: codeagentbench
-      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_PASSWORD: ${CODEAGENTBENCH_POSTGRES_PASSWORD:?Set a local development database password}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - codeagentbench-postgres:/var/lib/postgresql/data
 
