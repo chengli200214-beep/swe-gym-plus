@@ -15,11 +15,11 @@ MANIFESTS = [ROOT / "data/manifests/swegym-smoke.json", ROOT / "data/manifests/s
 
 def test_frozen_split_covers_all_imported_tasks() -> None:
     assert validate_split(SPLIT, MANIFESTS) == {
-        "train": 6,
+        "train": 7,
         "dev": 4,
         "test_candidates": 1,
         "excluded_prior_train": 1,
-        "unassigned": 8,
+        "unassigned": 7,
     }
 
 
