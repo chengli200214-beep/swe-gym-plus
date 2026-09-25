@@ -60,6 +60,22 @@ def test_bwrap_binds_only_approved_git_alternate(tmp_path) -> None:
     assert str((tmp_path / "artifacts" / ".repo_cache").resolve()) not in command
 
 
+def test_bwrap_evaluation_uses_shared_approved_git_cache(tmp_path) -> None:
+    workspace = tmp_path / "artifacts" / "evaluations" / "run-eval" / "workspace"
+    info = workspace / ".git" / "objects" / "info"
+    info.mkdir(parents=True)
+    objects = tmp_path / "artifacts" / ".repo_cache" / "snapshot" / ".git" / "objects"
+    objects.mkdir(parents=True)
+    (info / "alternates").write_text(str(objects), encoding="utf-8")
+    executor = object.__new__(BashExecutor)
+    executor.workspace = workspace.resolve()
+    executor.bwrap = "/usr/bin/bwrap"
+
+    command = executor._bwrap_command("git status --short", executor.workspace)
+
+    assert ["--ro-bind", str(objects.resolve()), str(objects.resolve())] in [command[i:i + 3] for i in range(len(command) - 2)]
+
+
 def test_bwrap_rejects_git_alternate_outside_cache(tmp_path) -> None:
     workspace = tmp_path / "artifacts" / "run" / "workspace"
     info = workspace / ".git" / "objects" / "info"

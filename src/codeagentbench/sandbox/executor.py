@@ -107,7 +107,12 @@ class BashExecutor:
             command.extend(["--ro-bind", str(git_metadata), "/workspace/.git"])
             alternates_file = git_metadata / "objects" / "info" / "alternates"
             if alternates_file.is_file():
-                cache_root = (self.workspace.parents[1] / ".repo_cache").resolve()
+                run_root = self.workspace.parents[1]
+                # Formal evaluation checkouts live under
+                # <artifact-root>/evaluations/<run-id>/workspace, while the
+                # immutable snapshot cache is shared at <artifact-root>.
+                artifact_root = run_root.parent if run_root.name == "evaluations" else run_root
+                cache_root = (artifact_root / ".repo_cache").resolve()
                 for line in alternates_file.read_text(encoding="utf-8").splitlines():
                     if not line.strip():
                         continue
