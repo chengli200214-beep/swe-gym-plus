@@ -40,6 +40,8 @@ class Evaluator:
 
     def evaluate(self, task: TaskRecord, candidate: Candidate, *, timeout_seconds: float = 600.0) -> EvaluationResult:
         spec = task.eval_spec
+        if timeout_seconds <= 0:
+            return EvaluationResult(Verdict.BLOCKED, None, None, None, reason="formal evaluation has no remaining time budget")
         if not spec.test_command:
             return EvaluationResult(Verdict.BLOCKED, None, None, None, reason="missing formal test command")
         run_id = f"{candidate.run_id}-eval-{candidate.candidate_id}"
@@ -55,8 +57,11 @@ class Evaluator:
         ok, detail = _apply_patch(workspace.path, spec.test_patch)
         if not ok:
             return EvaluationResult(Verdict.BLOCKED, None, None, None, stderr=detail, duration_seconds=time.monotonic() - started, reason="evaluation test patch did not apply")
+        remaining_seconds = timeout_seconds - (time.monotonic() - started)
+        if remaining_seconds <= 0:
+            return EvaluationResult(Verdict.BLOCKED, None, None, None, duration_seconds=time.monotonic() - started, reason="formal evaluation preparation exhausted time budget")
         try:
-            result = subprocess.run(spec.test_command, cwd=workspace.path, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_seconds, check=False)
+            result = subprocess.run(spec.test_command, cwd=workspace.path, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=remaining_seconds, check=False)
             exit_code = result.returncode
             stdout, stderr = result.stdout, result.stderr
         except subprocess.TimeoutExpired as exc:

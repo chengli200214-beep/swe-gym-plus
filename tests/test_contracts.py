@@ -10,7 +10,7 @@ from codeagentbench.adapters.model import ScriptedModel
 from codeagentbench.harness.budget import BudgetExceeded, BudgetLedger
 from codeagentbench.harness.context import ContextManager
 from codeagentbench.harness.recovery import ActionJournal
-from codeagentbench.models import Candidate, EvalSpec, RunConfig, TaskRecord, ToolIntent, Verdict
+from codeagentbench.models import Candidate, EvalSpec, EvaluationResult, RunConfig, TaskRecord, ToolIntent, Verdict
 from codeagentbench.rollout.selector import RuleCandidateSelector
 from codeagentbench.rollout.coordinator import RolloutCoordinator
 from codeagentbench.runtime import AgentRuntime, parse_action
@@ -299,6 +299,17 @@ def test_evaluator_uses_fresh_workspace_and_formal_test(tmp_path: Path) -> None:
     assert result.fail_to_pass is True
 
 
+def test_evaluator_rejects_no_remaining_time_before_workspace_creation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("workspace creation should not start")
+
+    monkeypatch.setattr(WorkspaceManager, "create", forbidden)
+    result = Evaluator(tmp_path / "evaluations").evaluate(
+        demo_task(), Candidate("c1", "r1", "", "completed"), timeout_seconds=0,
+    )
+    assert result.verdict is Verdict.BLOCKED
+
+
 def test_selector_does_not_use_formal_label() -> None:
     selector = RuleCandidateSelector()
     weak = Candidate("weak", "r", "diff", "completed", visible_test_passed=False)
@@ -323,3 +334,37 @@ def test_multi_rollout_uses_independent_workspaces_and_reports_selection(tmp_pat
     assert len({item.run_id for item in group.candidates}) == 2
     assert group.selection.selected_candidate_id in {"0", "1"}
     assert group.metrics["oracle_coverage_at_k"] is True
+
+
+def test_multi_rollout_does_not_call_model_or_evaluator_after_shared_budget_exhaustion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    coordinator = RolloutCoordinator(str(tmp_path / "artifacts"))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("budget-exhausted work must not start")
+
+    monkeypatch.setattr(coordinator.evaluator, "evaluate", forbidden)
+    group = coordinator.run(
+        demo_task(), forbidden,
+        RunConfig(candidate_count=2, max_tool_calls=0),
+        group_id="no-budget",
+    )
+    assert len(group.candidates) == 1
+    assert group.candidates[0].status == "blocked"
+    assert group.candidates[0].evaluation.verdict is Verdict.BLOCKED
+    assert group.metrics["oracle_coverage_at_k"] is False
+
+
+def test_formal_evaluation_past_shared_deadline_is_not_counted_as_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    coordinator = RolloutCoordinator(str(tmp_path / "artifacts"))
+    monkeypatch.setattr(
+        coordinator.evaluator,
+        "evaluate",
+        lambda *args, **kwargs: EvaluationResult(Verdict.PASSED, 0, True, True, duration_seconds=11.0),
+    )
+    group = coordinator.run(
+        demo_task(), lambda _: ScriptedModel([{"done": True}]),
+        RunConfig(candidate_count=1, max_seconds=10),
+        group_id="late-evaluation",
+    )
+    assert group.candidates[0].evaluation.verdict is Verdict.BLOCKED
+    assert group.metrics["oracle_coverage_at_k"] is False
