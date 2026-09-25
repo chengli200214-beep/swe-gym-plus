@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-from codeagentbench.models import EvalSpec, TaskRecord
+from codeagentbench.models import EvalSpec, TaskRecord, ToolIntent
+from codeagentbench.sandbox.executor import BashExecutor
 from codeagentbench.sandbox.workspace import WorkspaceManager
 
 
@@ -53,8 +55,13 @@ def _apply_patch(workspace: Path, patch: str) -> tuple[bool, str]:
     return result.returncode == 0, result.stderr
 
 
-def _run_tests(workspace: Path, command: str, timeout: float = 600.0) -> tuple[int | None, str, str, float]:
+def _run_tests(workspace: Path, command: str, timeout: float = 600.0, *, cache_root: str | Path | None = None) -> tuple[int | None, str, str, float]:
     started = time.monotonic()
+    if os.getenv("CODEAGENTBENCH_EXECUTOR") == "bwrap":
+        receipt = BashExecutor(workspace, output_limit=200_000, backend="bwrap", approved_cache_root=cache_root).execute(
+            ToolIntent("quality-control", command, str(workspace), timeout)
+        )
+        return receipt.exit_code, receipt.stdout, receipt.stderr, time.monotonic() - started
     try:
         result = subprocess.run(command, cwd=workspace, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
         return result.returncode, result.stdout, result.stderr, time.monotonic() - started
@@ -69,6 +76,7 @@ def run_controls(task: TaskRecord, *, timeout: float = 600.0, cache_root: str | 
     if not spec.test_command:
         return QualityReport(task.instance_id, False, (), "missing test_command")
     controls: list[ControlResult] = []
+    approved_cache_root = Path(cache_root).resolve() if cache_root is not None else None
     with tempfile.TemporaryDirectory(prefix="cab-quality-") as temp:
         root = Path(temp)
         manager = WorkspaceManager(root, cache_root=cache_root)
@@ -87,7 +95,7 @@ def run_controls(task: TaskRecord, *, timeout: float = 600.0, cache_root: str | 
             if not test_ok:
                 controls.append(ControlResult(name, None, expected_pass, False, "", patch_error, 0.0, "patch failed"))
                 continue
-            exit_code, stdout, stderr, duration = _run_tests(workspace.path, spec.test_command, timeout)
+            exit_code, stdout, stderr, duration = _run_tests(workspace.path, spec.test_command, timeout, cache_root=approved_cache_root or manager.cache_root)
             observed = exit_code == 0
             controls.append(ControlResult(name, exit_code, expected_pass, observed, stdout, stderr, duration))
     admitted = len(controls) == 2 and all(item.observed_pass == item.expected_pass for item in controls)

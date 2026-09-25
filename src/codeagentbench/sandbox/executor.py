@@ -25,13 +25,14 @@ class BashExecutor:
     environment, and disables network access. Use bwrap for untrusted commands.
     """
 
-    def __init__(self, workspace: str | Path, journal: ActionJournal | None = None, output_limit: int = 20_000, *, backend: str = "local") -> None:
+    def __init__(self, workspace: str | Path, journal: ActionJournal | None = None, output_limit: int = 20_000, *, backend: str = "local", approved_cache_root: str | Path | None = None) -> None:
         if backend not in {"local", "bwrap"}:
             raise ValueError(f"unknown executor backend: {backend}")
         self.workspace = Path(workspace).resolve()
         self.journal = journal
         self.output_limit = output_limit
         self.backend = backend
+        self.approved_cache_root = Path(approved_cache_root).resolve() if approved_cache_root is not None else None
         self.bash = shutil.which("bash") or shutil.which("wsl.exe")
         self.bwrap = shutil.which("bwrap") if backend == "bwrap" else None
         if backend == "bwrap" and (os.name == "nt" or not self.bwrap):
@@ -122,7 +123,7 @@ class BashExecutor:
                 # <artifact-root>/evaluations/<run-id>/workspace, while the
                 # immutable snapshot cache is shared at <artifact-root>.
                 artifact_root = run_root.parent if run_root.name == "evaluations" else run_root
-                cache_root = (artifact_root / ".repo_cache").resolve()
+                cache_root = getattr(self, "approved_cache_root", None) or (artifact_root / ".repo_cache").resolve()
                 for line in alternates_file.read_text(encoding="utf-8").splitlines():
                     if not line.strip():
                         continue

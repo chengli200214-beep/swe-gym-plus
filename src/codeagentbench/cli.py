@@ -68,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
         from codeagentbench.tasks.quality import run_controls
 
         manifest = load_manifest(args.manifest)
+        if manifest.dataset == "SWE-Gym" and os.getenv("CODEAGENTBENCH_EXECUTOR") != "bwrap":
+            print("SWE-Gym quality controls require CODEAGENTBENCH_EXECUTOR=bwrap", file=sys.stderr)
+            return 2
         task = next((item for item in manifest.tasks if item.instance_id == args.task_id), None)
         if task is None:
             print(f"unknown task: {args.task_id}", file=sys.stderr)
