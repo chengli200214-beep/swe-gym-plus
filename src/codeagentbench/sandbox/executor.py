@@ -89,7 +89,7 @@ class BashExecutor:
         assert self.bwrap is not None
         relative = cwd.relative_to(self.workspace)
         sandbox_cwd = "/workspace" if relative == Path(".") else "/workspace/" + relative.as_posix()
-        return [
+        command = [
             self.bwrap,
             "--unshare-user", "--unshare-pid", "--unshare-net",
             "--die-with-parent", "--new-session", "--cap-drop", "ALL",
@@ -99,6 +99,13 @@ class BashExecutor:
             "--symlink", "usr/lib64", "/lib64",
             "--dev", "/dev", "--tmpfs", "/tmp",
             "--bind", str(self.workspace), "/workspace",
+        ]
+        git_metadata = self.workspace / ".git"
+        if git_metadata.exists():
+            # The model may inspect Git state but must not install hooks or
+            # change core.fsmonitor before the parent calls Git outside bwrap.
+            command.extend(["--ro-bind", str(git_metadata), "/workspace/.git"])
+        command.extend([
             "--chdir", sandbox_cwd,
             "--clearenv", "--setenv", "PATH", "/usr/bin:/bin",
             "--setenv", "HOME", "/tmp",
@@ -106,7 +113,8 @@ class BashExecutor:
             "--setenv", "CI", "1",
             "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
             "--", "/usr/bin/bash", "-c", command_text,
-        ]
+        ])
+        return command
 
     @staticmethod
     def _normalize_command(command: str) -> tuple[str, str | None]:

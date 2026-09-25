@@ -21,7 +21,8 @@ def workspace_digest(path: str | Path) -> str:
     path = Path(path)
     pieces: list[bytes] = []
     if (path / ".git").exists():
-        for command in (["git", "status", "--porcelain=v1"], ["git", "diff", "--binary"]):
+        for command in (["git", "-c", "core.fsmonitor=false", "status", "--porcelain=v1"],
+                        ["git", "-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv", "--binary"]):
             result = subprocess.run(command, cwd=path, capture_output=True, check=False)
             pieces.append(result.stdout)
         # Tracked file contents are already represented by `git diff`. Hashing
@@ -38,7 +39,7 @@ def workspace_digest(path: str | Path) -> str:
         for encoded_relative in sorted(untracked):
             file = path / Path(encoded_relative.decode(errors="surrogateescape"))
             try:
-                content = file.read_bytes()
+                content = (b"<symlink>" + str(file.readlink()).encode("utf-8", errors="surrogateescape")) if file.is_symlink() else file.read_bytes()
             except OSError:
                 content = b"<unreadable>"
             pieces.append(encoded_relative + b"\0" + hashlib.sha256(content).digest())
@@ -47,7 +48,7 @@ def workspace_digest(path: str | Path) -> str:
             if file.is_file() and ".git" not in file.parts:
                 relative = file.relative_to(path).as_posix().encode("utf-8")
                 try:
-                    content = file.read_bytes()
+                    content = (b"<symlink>" + str(file.readlink()).encode("utf-8", errors="surrogateescape")) if file.is_symlink() else file.read_bytes()
                 except OSError:
                     content = b"<unreadable>"
                 pieces.append(relative + b"\0" + hashlib.sha256(content).digest())
@@ -66,11 +67,11 @@ class Workspace:
         return workspace_digest(self.path)
 
     def diff(self) -> str:
-        result = subprocess.run(["git", "diff", "--binary"], cwd=self.path, capture_output=True, text=True, check=False)
+        result = subprocess.run(["git", "-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv", "--binary"], cwd=self.path, capture_output=True, text=True, check=False)
         return result.stdout
 
     def changed_files(self) -> tuple[str, ...]:
-        result = subprocess.run(["git", "status", "--porcelain=v1"], cwd=self.path, capture_output=True, text=True, check=False)
+        result = subprocess.run(["git", "-c", "core.fsmonitor=false", "status", "--porcelain=v1"], cwd=self.path, capture_output=True, text=True, check=False)
         files: list[str] = []
         for line in result.stdout.splitlines():
             if len(line) > 3:

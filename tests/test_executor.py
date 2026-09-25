@@ -26,12 +26,14 @@ def test_native_bash_skips_login_profile(tmp_path, monkeypatch) -> None:
 
 
 def test_bwrap_exposes_only_checkout_and_clears_credentials(tmp_path) -> None:
+    (tmp_path / ".git").mkdir()
     executor = object.__new__(BashExecutor)
     executor.workspace = Path(tmp_path).resolve()
     executor.bwrap = "/usr/bin/bwrap"
     command = executor._bwrap_command("pwd", executor.workspace)
     assert command[0] == "/usr/bin/bwrap"
     assert ["--bind", str(tmp_path.resolve()), "/workspace"] == command[command.index("--bind"):command.index("--bind") + 3]
+    assert ["--ro-bind", str((tmp_path / ".git").resolve()), "/workspace/.git"] in [command[i:i + 3] for i in range(len(command) - 2)]
     assert "--unshare-net" in command
     assert "--cap-drop" in command
     assert "--clearenv" in command
