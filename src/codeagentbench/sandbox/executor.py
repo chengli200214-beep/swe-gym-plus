@@ -97,6 +97,11 @@ class BashExecutor:
             "--symlink", "usr/bin", "/bin",
             "--symlink", "usr/lib", "/lib",
             "--symlink", "usr/lib64", "/lib64",
+            # Ubuntu's system Python is /usr/bin/python3, but SWE-Gym task
+            # commands commonly invoke `python`. Keep the alias inside the
+            # sandbox instead of modifying the host or exposing Conda.
+            "--dir", "/toolbin",
+            "--symlink", "/usr/bin/python3", "/toolbin/python",
             "--dev", "/dev", "--tmpfs", "/tmp",
             "--bind", str(self.workspace), "/workspace",
         ]
@@ -127,7 +132,7 @@ class BashExecutor:
                     command.extend(["--ro-bind", str(alternate), str(alternate)])
         command.extend([
             "--chdir", sandbox_cwd,
-            "--clearenv", "--setenv", "PATH", "/usr/bin:/bin",
+            "--clearenv", "--setenv", "PATH", "/toolbin:/usr/bin:/bin",
             "--setenv", "HOME", "/tmp",
             "--setenv", "TMPDIR", "/tmp",
             "--setenv", "CI", "1",
