@@ -1,0 +1,16 @@
+# Supplemental Moto extras resolved on the ModelScope Python 3.12 image.
+# These do not install Moto itself: each task uses its immutable base checkout.
+# This is NOT the full training-environment lock; record_environment.py captures
+# the rest of the environment. A passed gold/unfixed control remains mandatory.
+python-jose[cryptography]==3.5.0
+ecdsa==0.19.2
+docker==7.2.0
+graphql-core==3.2.12
+cfn-lint==1.57.0
+sshpubkeys==3.3.1
+openapi-spec-validator==0.9.0
+pyparsing==3.3.2
+jsondiff==2.2.1
+aws-xray-sdk==2.15.0
+multipart==2.0.0
+py-partiql-parser==0.5.1
