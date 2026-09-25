@@ -400,7 +400,8 @@ def test_selector_does_not_use_formal_label() -> None:
     assert decision.selected_candidate_id == "strong"
 
 
-def test_multi_rollout_uses_independent_workspaces_and_reports_selection(tmp_path: Path) -> None:
+@pytest.mark.parametrize("candidate_count", [1, 2, 4])
+def test_multi_rollout_uses_independent_workspaces_and_reports_selection(tmp_path: Path, candidate_count: int) -> None:
     task = demo_task()
     group = RolloutCoordinator(str(tmp_path / "artifacts")).run(
         task,
@@ -409,12 +410,12 @@ def test_multi_rollout_uses_independent_workspaces_and_reports_selection(tmp_pat
             {"command": "python -m pytest -q"},
             {"done": True},
         ]),
-        RunConfig(candidate_count=2, max_steps=4, max_seconds=120, max_tool_calls=8),
+        RunConfig(candidate_count=candidate_count, max_steps=4, max_seconds=180, max_tool_calls=16),
         group_id="group-1",
     )
-    assert len(group.candidates) == 2
-    assert len({item.run_id for item in group.candidates}) == 2
-    assert group.selection.selected_candidate_id in {"0", "1"}
+    assert len(group.candidates) == candidate_count
+    assert len({item.run_id for item in group.candidates}) == candidate_count
+    assert group.selection.selected_candidate_id in {str(i) for i in range(candidate_count)}
     assert group.metrics["oracle_coverage_at_k"] is True
 
 

@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from typing import Callable
 
 from codeagentbench.adapters.model import ChatModel, ModelResponse
-from codeagentbench.harness.budget import BudgetExceeded, BudgetLedger
+from codeagentbench.harness.budget import BudgetExceeded, BudgetLedger, BudgetSnapshot
 from codeagentbench.harness.context import ContextManager
 from codeagentbench.harness.recovery import ActionJournal
 from codeagentbench.models import AgentTaskView, RunConfig, RunState, TaskRecord, ToolIntent
@@ -237,9 +237,11 @@ class AgentRuntime:
         run_id: str | None = None,
         failure_injector: Callable[[str], None] | None = None,
         ledger: BudgetLedger | None = None,
+        resume: bool = False,
+        cancellation_requested: Callable[[], bool] | None = None,
     ) -> RuntimeResult:
         run_id = run_id or f"{task.instance_id}-{int(time.time())}"
-        run_dir = self.artifact_store.start_run(run_id, task.instance_id, config)
+        run_dir = self.artifact_store.run_dir(run_id) if resume else self.artifact_store.start_run(run_id, task.instance_id, config)
         journal = ActionJournal(run_dir / "actions.jsonl")
         executor = BashExecutor(workspace.path, journal, backend=os.getenv("CODEAGENTBENCH_EXECUTOR", "local"))
         ledger = ledger or BudgetLedger(config.max_tokens, config.max_seconds, config.max_cost_usd, config.max_tool_calls)
@@ -247,29 +249,87 @@ class AgentRuntime:
         context = ContextManager(task.issue)
         view = task.agent_view()
         messages = [{"role": "system", "content": self._system_prompt()}, {"role": "user", "content": self._initial_prompt(view)}]
-        self.artifact_store.append_event(run_id, {"type": "prompt", "content": messages[-1]["content"]})
         previous_signature = ""
         repeated = 0
         visible_test_passed = False
         tested_diff: str | None = None
+        if resume:
+            checkpoint = self.artifact_store.load_checkpoint(run_id)
+            if checkpoint is None:
+                raise RuntimeError("cannot resume without a checkpoint")
+            original = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+            if original["config"] != config.to_dict() or original["task_id"] != task.instance_id:
+                raise RuntimeError("resume configuration/task differs from original run")
+            state = RunState.from_dict(checkpoint["state"])
+            if state.run_id != run_id or state.task_id != task.instance_id:
+                raise RuntimeError("checkpoint identity mismatch")
+            if state.status == "completed":
+                raise RuntimeError("completed runs cannot be resumed")
+            if state.pending_model:
+                raise RuntimeError("model request outcome is unknown; resume refused to prevent duplicate spending")
+            if journal.pending():
+                raise RuntimeError("tool action outcome is unknown; resume refused to prevent duplicate effects")
+            ledger.restore(BudgetSnapshot(**checkpoint["budget"]))
+            messages = state.messages
+            if state.pending_action_id:
+                receipt_record = next((r for r in reversed(journal.records()) if r.get("type") == "receipt" and r["action_id"] == state.pending_action_id), None)
+                if receipt_record is None or receipt_record["post_digest"] != workspace.digest:
+                    raise RuntimeError("recovery receipt/workspace mismatch")
+                ledger.consume(seconds=receipt_record["duration_seconds"], tool_calls=1)
+                observation = {key: receipt_record[key] for key in ("exit_code", "stdout", "stderr", "timed_out")}
+                messages.append({"role": "user", "content": "Tool result:\n" + json.dumps(observation, ensure_ascii=False)})
+                records = journal.records()
+                intent_record = next(r for r in records if r.get("type") == "intent" and r["action_id"] == state.pending_action_id)
+                event_path = run_dir / "events.jsonl"
+                tool_already_logged = any(json.loads(line).get("receipt", {}).get("action_id") == state.pending_action_id for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip())
+                if not tool_already_logged:
+                    self.artifact_store.append_event(run_id, {"type": "tool", "intent": {k: v for k, v in intent_record.items() if k != "type"}, "receipt": {k: v for k, v in receipt_record.items() if k != "type"}, "recovered": True})
+                state.last_action_id = state.pending_action_id
+                state.pending_action_id = None
+                state.pending_action_text = ""
+                state.next_step = state.step + 1
+                state.tested_diff = None
+            elif checkpoint["workspace_digest"] != workspace.digest:
+                raise RuntimeError("workspace differs from checkpoint; resume refused")
+            previous_signature, repeated = state.previous_signature, state.repeated
+            tested_diff = state.tested_diff
+            visible_test_passed = bool(tested_diff and tested_diff == workspace.diff())
+            for message in messages[-6:]:
+                if message.get("role") == "user":
+                    context.add("tool_output", message["content"][:4000], source="resume", priority=30)
+            state.status, state.failure_reason = "running", ""
+            self.artifact_store.append_event(run_id, {"type": "resumed", "next_step": state.next_step})
+        else:
+            self.artifact_store.append_event(run_id, {"type": "prompt", "content": messages[-1]["content"]})
         self._checkpoint(state, ledger, workspace, messages)
         clock_at = time.monotonic()
         try:
-            for step in range(config.max_steps):
+            for step in range(state.next_step, config.max_steps):
                 state.step = step
+                if cancellation_requested and cancellation_requested():
+                    state.status, state.failure_reason = "cancelled", "cancellation requested"
+                    break
                 elapsed = time.monotonic() - clock_at
                 if elapsed:
                     ledger.consume(seconds=elapsed)
                 clock_at = time.monotonic()
-                bound = getattr(model, "request_token_bound", lambda _: 1)(messages)
-                if not ledger.can_spend(tokens=bound) or ledger.snapshot.remaining_seconds <= 0:
-                    raise BudgetExceeded("insufficient budget before model request")
-                model_started = time.monotonic()
-                response: ModelResponse = model.complete(messages, temperature=config.temperature)
-                self.artifact_store.append_event(run_id, {"type": "model", "content": response.text, "prompt_tokens": response.prompt_tokens, "completion_tokens": response.completion_tokens, "cost_usd": response.cost_usd, "estimated_cost_cny": response.estimated_cost_cny})
-                ledger.consume(tokens=response.prompt_tokens + response.completion_tokens, cost_usd=response.cost_usd, seconds=time.monotonic() - model_started)
-                clock_at = time.monotonic()
-                messages.append({"role": "assistant", "content": response.text})
+                if state.pending_action_text:
+                    response = ModelResponse(state.pending_action_text)
+                else:
+                    bound = getattr(model, "request_token_bound", lambda _: 1)(messages)
+                    if not ledger.can_spend(tokens=bound) or ledger.snapshot.remaining_seconds <= 0:
+                        raise BudgetExceeded("insufficient budget before model request")
+                    state.pending_model = True
+                    self._checkpoint(state, ledger, workspace, messages)
+                    model_started = time.monotonic()
+                    response = model.complete(messages, temperature=config.temperature)
+                    self.artifact_store.append_event(run_id, {"type": "model", "content": response.text, "prompt_tokens": response.prompt_tokens, "completion_tokens": response.completion_tokens, "cost_usd": response.cost_usd, "estimated_cost_cny": response.estimated_cost_cny})
+                    ledger.consume(tokens=response.prompt_tokens + response.completion_tokens, cost_usd=response.cost_usd, seconds=time.monotonic() - model_started)
+                    clock_at = time.monotonic()
+                    messages.append({"role": "assistant", "content": response.text})
+                    state.pending_model = False
+                    state.pending_action_text = response.text
+                    self._checkpoint(state, ledger, workspace, messages)
                 try:
                     action = parse_action(response.text)
                 except ValueError as exc:
@@ -284,6 +344,8 @@ class AgentRuntime:
                         state.status, state.failure_reason = "failed", str(exc)
                     break
                 if action.done:
+                    state.pending_action_text = ""
+                    state.next_step = step + 1
                     state.status = "completed"
                     if workspace.diff() and not visible_test_passed:
                         state.failure_reason = "unverified: no recognized passing post-edit visible test"
@@ -300,10 +362,14 @@ class AgentRuntime:
                 if failure_injector:
                     failure_injector("after_intent")
                 receipt = executor.execute(intent, intent_already_recorded=True)
+                if failure_injector:
+                    failure_injector("after_receipt")
                 ledger.consume(seconds=time.monotonic() - clock_at, tool_calls=1)
                 clock_at = time.monotonic()
                 state.pending_action_id = None
                 state.last_action_id = action_id
+                state.pending_action_text = ""
+                state.next_step = step + 1
                 if (
                     receipt.exit_code == 0
                     and not receipt.timed_out
@@ -346,6 +412,8 @@ class AgentRuntime:
                 signature = hashlib.sha256(f"{action.command}\0{pre_digest}".encode("utf-8")).hexdigest()
                 repeated = repeated + 1 if signature == previous_signature else 0
                 previous_signature = signature
+                state.previous_signature, state.repeated = previous_signature, repeated
+                state.tested_diff = tested_diff
                 self.artifact_store.append_event(run_id, {"type": "tool", "intent": asdict(intent), "receipt": asdict(receipt)})
                 if repeated == 1:
                     messages.append(
@@ -385,6 +453,8 @@ class AgentRuntime:
                     messages.append({"role": "user", "content": checkpoint_warning})
                 state.context_compressions = len(context.compressions)
                 self._checkpoint(state, ledger, workspace, messages)
+                if failure_injector:
+                    failure_injector("after_checkpoint")
             else:
                 state.status, state.failure_reason = "failed", "maximum agent steps reached"
         except BudgetExceeded as exc:

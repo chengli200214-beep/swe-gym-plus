@@ -71,3 +71,15 @@ def test_action_examples_reject_unverifiable_prompt() -> None:
     row["messages"][0]["content"] = "Fix the function"
     with pytest.raises(ValueError, match="not auditable JSON"):
         action_examples(row, system_prompt="Return JSON")
+
+
+def test_formal_examples_include_only_verified_completion_and_history():
+    row = _row()
+    row["agent_status"] = "completed"
+    examples = action_examples(row, system_prompt="Return JSON", context_chars=4000, include_done=True, history=True)
+    assert len(examples) == 3
+    assert json.loads(examples[-1]["messages"][-1]["content"])["done"]
+    assert "Previous action:" in examples[-1]["messages"][1]["content"]
+    assert "1 passed" in examples[-1]["messages"][1]["content"]
+    row["agent_status"] = "blocked"
+    assert len(action_examples(row, system_prompt="Return JSON", include_done=True)) == 2

@@ -256,6 +256,12 @@ class RunState:
     spent_cost_usd: float = 0.0
     context_compressions: int = 0
     failure_reason: str = ""
+    next_step: int = 0
+    pending_model: bool = False
+    pending_action_text: str = ""
+    tested_diff: str | None = None
+    previous_signature: str = ""
+    repeated: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -1,0 +1,12 @@
+{
+  "source_revision": "bb94ed9e39bbeb96a7fcbfb533b80f25a7fd59cb",
+  "source_sha256": "60569cea74bb281f7a5579467436a2bc1932c6e0c5f2f7fa0d084392abd9ad97",
+  "dataset_card_license": "MIT",
+  "upstream_repository_licenses_still_apply": true,
+  "selection": "repo=getmoto/moto; 1<=FAIL_TO_PASS count<=5; PASS_TO_PASS count<=30; hash seed cab-expanded-v1",
+  "eligible_fresh": 143,
+  "train_candidates": 67,
+  "eval": 20,
+  "manifest_sha256": "7f26b0e7f8cc6a7a30687213ac0a11959f7ee9b4ed3d52063365f08fcc88d9bb",
+  "split_sha256": "35d853d3de41b5c65b793b5ce80681b155cef049b7914abc3e958e6bbc900d4a"
+}

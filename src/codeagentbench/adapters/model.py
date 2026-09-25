@@ -57,12 +57,13 @@ class LocalHFModel:
 
         model_path = str(model_path)
         self.model_path = model_path
+        self.model = model_path
         self.max_new_tokens = max_new_tokens
         self._torch = torch
         load_kwargs = {
             "device_map": "auto",
             "torch_dtype": torch.bfloat16,
-            "trust_remote_code": True,
+            "trust_remote_code": False,
             "local_files_only": local_files_only,
         }
         adapter_config = Path(model_path) / "adapter_config.json"
@@ -86,10 +87,14 @@ class LocalHFModel:
             self._model = AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs)
         self._tokenizer = AutoTokenizer.from_pretrained(
             model_path,
-            trust_remote_code=True,
+            trust_remote_code=False,
             local_files_only=local_files_only,
         )
         self._model.eval()
+
+    def request_token_bound(self, messages: list[dict[str, str]]) -> int:
+        prompt = self._tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        return len(self._tokenizer(prompt, add_special_tokens=False)["input_ids"]) + self.max_new_tokens
 
     def complete(self, messages: list[dict[str, str]], *, temperature: float = 0.0) -> ModelResponse:
         inputs = self._tokenizer.apply_chat_template(
@@ -97,6 +102,7 @@ class LocalHFModel:
             tokenize=True,
             add_generation_prompt=True,
             return_tensors="pt",
+            return_dict=True,
         )
         device = next(self._model.parameters()).device
         inputs = {key: value.to(device) for key, value in inputs.items()}
@@ -196,12 +202,11 @@ class DeepSeekModel:
                         json=request,
                         timeout=120.0,
                     )
-                except httpx.RequestError:
-                    if attempt == 3:
-                        raise
-                    time.sleep(2**attempt)
-                    continue
-                if response.status_code not in {429, 500, 502, 503, 504} or attempt == 3:
+                except httpx.RequestError as exc:
+                    raise RuntimeError("model request outcome unknown; refusing automatic paid retry") from exc
+                # A server/transport failure may have consumed tokens. Only a
+                # rate-limit rejection is safe to retry without a receipt.
+                if response.status_code != 429 or attempt == 3:
                     break
                 time.sleep(2**attempt)
             assert response is not None

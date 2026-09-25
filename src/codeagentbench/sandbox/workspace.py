@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import shutil
 import subprocess
 import tarfile
@@ -23,7 +24,7 @@ def workspace_digest(path: str | Path) -> str:
     if (path / ".git").exists():
         for command in (["git", "-c", "core.fsmonitor=false", "status", "--porcelain=v1"],
                         ["git", "-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv", "--binary"]):
-            result = subprocess.run(command, cwd=path, capture_output=True, check=False)
+            result = subprocess.run(command, cwd=path, capture_output=True, check=False, timeout=30)
             pieces.append(result.stdout)
         # Tracked file contents are already represented by `git diff`. Hashing
         # the complete checkout on every checkpoint is quadratic in practice
@@ -34,6 +35,7 @@ def workspace_digest(path: str | Path) -> str:
             cwd=path,
             capture_output=True,
             check=False,
+            timeout=30,
         )
         untracked = [item for item in result.stdout.split(b"\0") if item]
         for encoded_relative in sorted(untracked):
@@ -67,11 +69,11 @@ class Workspace:
         return workspace_digest(self.path)
 
     def diff(self) -> str:
-        result = subprocess.run(["git", "-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv", "--binary"], cwd=self.path, capture_output=True, text=True, check=False)
+        result = subprocess.run(["git", "-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv", "--binary"], cwd=self.path, capture_output=True, text=True, check=False, timeout=30)
         return result.stdout
 
     def changed_files(self) -> tuple[str, ...]:
-        result = subprocess.run(["git", "-c", "core.fsmonitor=false", "status", "--porcelain=v1"], cwd=self.path, capture_output=True, text=True, check=False)
+        result = subprocess.run(["git", "-c", "core.fsmonitor=false", "status", "--porcelain=v1"], cwd=self.path, capture_output=True, text=True, check=False, timeout=30)
         files: list[str] = []
         for line in result.stdout.splitlines():
             if len(line) > 3:
@@ -89,6 +91,8 @@ class WorkspaceManager:
         self.cache_root.mkdir(parents=True, exist_ok=True)
 
     def create(self, task: TaskRecord, run_id: str) -> Workspace:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", run_id):
+            raise ValueError("invalid run_id")
         target = self.root / run_id / "workspace"
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
@@ -149,6 +153,7 @@ class WorkspaceManager:
             capture_output=True,
             text=True,
             check=False,
+            timeout=120,
         )
         if result.returncode:
             raise RuntimeError(f"could not clone cached snapshot: {result.stderr.strip()}")
@@ -156,7 +161,7 @@ class WorkspaceManager:
     @staticmethod
     def _archive_git_snapshot(source: Path, base_commit: str, target: Path) -> None:
         revision = base_commit if base_commit not in {"", "local", "HEAD"} else "HEAD"
-        archived = subprocess.run(["git", "archive", "--format=tar", revision], cwd=source, capture_output=True, check=False)
+        archived = subprocess.run(["git", "archive", "--format=tar", revision], cwd=source, capture_output=True, check=False, timeout=120)
         if archived.returncode:
             raise RuntimeError(f"base commit {revision!r} unavailable: {archived.stderr.decode(errors='replace').strip()}")
         WorkspaceManager._extract_archive(archived.stdout, target)
@@ -229,19 +234,20 @@ class WorkspaceManager:
 
     @staticmethod
     def _init_local_repo(target: Path, base_commit: str) -> None:
-        subprocess.run(["git", "init", "--quiet"], cwd=target, check=True, capture_output=True)
-        subprocess.run(["git", "add", "-A"], cwd=target, check=True, capture_output=True)
+        subprocess.run(["git", "init", "--quiet"], cwd=target, check=True, capture_output=True, timeout=30)
+        subprocess.run(["git", "add", "-A"], cwd=target, check=True, capture_output=True, timeout=120)
         subprocess.run(
             ["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-c", "user.name=CodeAgentBench", "-c", "user.email=bench@localhost", "commit", "--quiet", "-m", "base"],
             cwd=target,
             check=True,
             capture_output=True,
+            timeout=120,
         )
         if base_commit and base_commit not in {"HEAD", "local"}:
             WorkspaceManager._checkout(target, base_commit)
 
     @staticmethod
     def _checkout(target: Path, base_commit: str) -> None:
-        result = subprocess.run(["git", "checkout", "--quiet", base_commit], cwd=target, capture_output=True, text=True, check=False)
+        result = subprocess.run(["git", "checkout", "--quiet", base_commit], cwd=target, capture_output=True, text=True, check=False, timeout=120)
         if result.returncode:
             raise RuntimeError(f"base commit {base_commit!r} unavailable: {result.stderr.strip()}")

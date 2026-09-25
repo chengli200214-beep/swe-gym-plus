@@ -6,12 +6,13 @@ import argparse
 import json
 import os
 import sys
+import signal
 import time
 from pathlib import Path
 
 from codeagentbench.adapters.model import DeepSeekModel, LocalHFModel, ScriptedModel
 from codeagentbench.models import Candidate, RunConfig
-from codeagentbench.sandbox.workspace import WorkspaceManager
+from codeagentbench.sandbox.workspace import Workspace, WorkspaceManager
 from codeagentbench.storage.artifacts import ArtifactStore
 from codeagentbench.tasks.manifest import import_swe_gym, load_manifest, save_manifest
 
@@ -36,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--base-model-path", type=Path)
     run.add_argument("--max-new-tokens", type=int, default=512)
     run.add_argument("--run-id")
+    run.add_argument("--resume", action="store_true", help="resume an acknowledged checkpoint with its original budget")
     run.add_argument("--max-steps", type=int, default=8)
     run.add_argument("--max-tool-calls", type=int, default=16)
     run.add_argument("--max-tokens", type=int, default=16000)
@@ -144,7 +146,16 @@ def main(argv: list[str] | None = None) -> int:
         model = DeepSeekModel()
     store = ArtifactStore(args.repo_root)
     run_id = args.run_id or f"{task.instance_id}-{int(time.time())}"
-    workspace = WorkspaceManager(args.repo_root).create(task, run_id)
+    store.run_dir(run_id)  # Validate before constructing any workspace path.
+    if args.resume:
+        if not args.run_id:
+            parser.error("--resume requires --run-id")
+        workspace_path = args.repo_root / run_id / "workspace"
+        if not workspace_path.is_dir():
+            parser.error("resume workspace is missing")
+        workspace = Workspace(run_id, workspace_path, task.base_commit)
+    else:
+        workspace = WorkspaceManager(args.repo_root).create(task, run_id)
     from codeagentbench.runtime import AgentRuntime
     config = RunConfig(
         model=getattr(model, "model", "scripted"),
@@ -154,7 +165,18 @@ def main(argv: list[str] | None = None) -> int:
         max_seconds=args.max_seconds,
         max_cost_usd=args.max_cost_usd,
     )
-    result = AgentRuntime(store).run(task, workspace, model, config, run_id=workspace.run_id)
+    if args.resume:
+        metadata = json.loads((store.run_dir(run_id) / "run.json").read_text(encoding="utf-8"))
+        config = RunConfig(**metadata["config"])
+    cancelled = False
+    def request_cancel(signum, frame):
+        nonlocal cancelled
+        cancelled = True
+    previous_handler = signal.signal(signal.SIGTERM, request_cancel)
+    try:
+        result = AgentRuntime(store).run(task, workspace, model, config, run_id=workspace.run_id, resume=args.resume, cancellation_requested=lambda: cancelled)
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
     if args.skip_evaluation:
         print(json.dumps({"run_id": result.run_id, "status": result.status, "diff_present": bool(result.diff), "evaluation": None}, ensure_ascii=False))
         return 0

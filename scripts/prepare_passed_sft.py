@@ -13,8 +13,8 @@ from pathlib import Path
 
 
 def combine(output: Path, sources: list[Path]) -> list[dict]:
-    if len(sources) < 5 or len(sources) > 10:
-        raise ValueError("formal SFT requires 5 to 10 distinct exports")
+    if len(sources) < 5:
+        raise ValueError("SFT pilot requires at least 5 distinct exports")
     rows: list[dict] = []
     seen_tasks: set[str] = set()
     seen_runs: set[str] = set()

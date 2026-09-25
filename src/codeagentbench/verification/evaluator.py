@@ -16,7 +16,7 @@ from codeagentbench.sandbox.workspace import WorkspaceManager
 def _apply_patch(workspace: Path, patch: str) -> tuple[bool, str]:
     if not patch:
         return True, ""
-    result = subprocess.run(["git", "apply", "--ignore-space-change", "--ignore-whitespace", "--whitespace=nowarn", "-"], cwd=workspace, input=patch, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
+    result = subprocess.run(["git", "apply", "--ignore-space-change", "--ignore-whitespace", "--whitespace=nowarn", "-"], cwd=workspace, input=patch, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False, timeout=30)
     return result.returncode == 0, result.stderr
 
 
@@ -51,12 +51,18 @@ class Evaluator:
         started = time.monotonic()
         try:
             workspace = manager.create(task, run_id)
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             return EvaluationResult(Verdict.BLOCKED, None, None, None, duration_seconds=time.monotonic() - started, reason=f"workspace preparation failed: {exc}")
-        ok, detail = _apply_patch(workspace.path, candidate.diff)
+        try:
+            ok, detail = _apply_patch(workspace.path, candidate.diff)
+        except subprocess.TimeoutExpired:
+            return EvaluationResult(Verdict.BLOCKED, None, None, None, duration_seconds=time.monotonic() - started, reason="candidate patch application timed out")
         if not ok:
             return EvaluationResult(Verdict.FAILED, None, False, None, stderr=detail, duration_seconds=time.monotonic() - started, reason="candidate patch did not apply")
-        ok, detail = _apply_patch(workspace.path, spec.test_patch)
+        try:
+            ok, detail = _apply_patch(workspace.path, spec.test_patch)
+        except subprocess.TimeoutExpired:
+            return EvaluationResult(Verdict.BLOCKED, None, None, None, duration_seconds=time.monotonic() - started, reason="evaluation patch application timed out")
         if not ok:
             return EvaluationResult(Verdict.BLOCKED, None, None, None, stderr=detail, duration_seconds=time.monotonic() - started, reason="evaluation test patch did not apply")
         remaining_seconds = timeout_seconds - (time.monotonic() - started)

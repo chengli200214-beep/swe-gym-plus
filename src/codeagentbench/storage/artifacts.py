@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -19,12 +20,16 @@ class ArtifactStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def run_dir(self, run_id: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", run_id):
+            raise ValueError("invalid run id")
         path = self.root / "runs" / run_id
         path.mkdir(parents=True, exist_ok=True)
         return path
 
     def start_run(self, run_id: str, task_id: str, config: RunConfig) -> Path:
         path = self.run_dir(run_id)
+        if (path / "run.json").exists():
+            raise ValueError("run already exists; resume it explicitly or choose a new run id")
         self._atomic_json(path / "run.json", {"run_id": run_id, "task_id": task_id, "config": config.to_dict()})
         return path
 

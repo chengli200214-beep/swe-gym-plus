@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import signal
 import sys
 from decimal import Decimal
 
@@ -28,6 +29,7 @@ def main() -> int:
     parser.add_argument("--max-tokens", type=int, default=120000)
     parser.add_argument("--max-seconds", type=int, default=600)
     parser.add_argument("--prompt-key", action="store_true")
+    parser.add_argument("--seed-exports", type=Path)
     args = parser.parse_args()
     if os.name == "nt":
         raise RuntimeError("collection requires a Linux bubblewrap host")
@@ -41,6 +43,20 @@ def main() -> int:
     root.mkdir(parents=True, exist_ok=True)
     for name in ("logs", "quality", "exports"):
         (root / name).mkdir(exist_ok=True)
+    if args.seed_exports:
+        import shutil
+        for source in sorted(args.seed_exports.glob("*.jsonl")):
+            row = json.loads(source.read_text())
+            if row["task_id"] not in args.tasks:
+                raise ValueError("seed export outside campaign train tasks")
+            prompt = json.loads(row["messages"][0]["content"])
+            if row.get("evaluation_verdict") != "passed" or prompt.get("allowed_test_command") or prompt.get("test_patch") or prompt.get("gold_patch"):
+                raise ValueError("seed must be an independently passed blind trajectory")
+            target = root / "exports" / source.name
+            if target.exists() and target.read_bytes() != source.read_bytes():
+                raise ValueError("seed export conflicts with existing result")
+            if not target.exists():
+                shutil.copy2(source, target)
     # Reuse already downloaded immutable base snapshots without exposing other
     # checkouts to tools (BashExecutor mounts only this task's object store).
     cache = root / ".repo_cache"
@@ -67,22 +83,27 @@ def main() -> int:
     meta_path = root / "campaign.json"
     if meta_path.exists():
         previous = json.loads(meta_path.read_text())
-        if any(previous[k] != meta[k] for k in ("tasks", "target", "max_steps", "max_tokens", "max_seconds", "split_sha256", "commit")):
+        if any(previous[k] != meta[k] for k in ("tasks", "target", "attempts", "max_steps", "max_tokens", "max_seconds", "split_sha256", "commit")):
             raise ValueError("campaign configuration changed; use a new root")
+        floor = Decimal(previous["balance_floor_cny"])
+        api_env["DEEPSEEK_MIN_BALANCE_CNY"] = str(floor)
     else:
         meta_path.write_text(json.dumps(meta, indent=2) + "\n")
     print(json.dumps({"status": "started", "tasks": len(args.tasks), "target": args.target, "balance_floor_cny": str(floor)}), flush=True)
 
     def run(command: list[str], log: Path, *, env=safe_env, timeout=600) -> int:
         with log.open("x") as output:
+            process = subprocess.Popen([sys.executable, "-m", "codeagentbench", *command], env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
             try:
-                return subprocess.run([sys.executable, "-m", "codeagentbench", *command], env=env, stdout=output, stderr=subprocess.STDOUT, timeout=timeout, check=False).returncode
+                return process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
                 output.write("\nCampaign process timeout\n")
                 return 124
 
     passed = {p.stem for p in (root / "exports").glob("*.jsonl") if p.stat().st_size}
-    results = []
+    results = json.loads((root / "results.json").read_text()) if (root / "results.json").exists() else []
     for task_id in args.tasks:
         if len(passed) >= args.target:
             break
@@ -98,6 +119,7 @@ def main() -> int:
             run(["quality-check", manifest, task_id, "--timeout", "120", "--output", str(quality_path)], quality_log, timeout=400)
         if not quality_path.exists() or not json.loads(quality_path.read_text())["admitted"]:
             results.append({"task": task_id, "status": "not_admitted"})
+            (root / "results.json").write_text(json.dumps(results, indent=2) + "\n")
             print(json.dumps(results[-1]), flush=True)
             continue
         for attempt in range(args.attempts):

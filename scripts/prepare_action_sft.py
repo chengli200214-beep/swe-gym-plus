@@ -15,7 +15,7 @@ from typing import Any
 from codeagentbench.runtime import AgentRuntime, parse_action
 
 
-def action_examples(row: dict[str, Any], *, system_prompt: str, context_chars: int = 800) -> list[dict[str, Any]]:
+def action_examples(row: dict[str, Any], *, system_prompt: str, context_chars: int = 800, include_done: bool = False, history: bool = False) -> list[dict[str, Any]]:
     if row.get("evaluation_verdict") != "passed":
         raise ValueError("source trajectory lacks a passed independent evaluation")
     task_id, run_id = row.get("task_id"), row.get("run_id")
@@ -41,11 +41,13 @@ def action_examples(row: dict[str, Any], *, system_prompt: str, context_chars: i
     if task_prompt.get("test_patch") or task_prompt.get("gold_patch"):
         raise ValueError(f"{run_id}: task prompt exposes evaluator-only patches")
     latest_tool = ""
+    transcript: list[str] = []
     examples: list[dict[str, Any]] = []
     for message in messages[1:]:
         role = message.get("role")
         if role == "tool":
             latest_tool = str(message.get("content", ""))
+            transcript.append("Tool result:\n" + latest_tool)
             continue
         if role != "assistant":
             continue
@@ -53,15 +55,17 @@ def action_examples(row: dict[str, Any], *, system_prompt: str, context_chars: i
         # A five-task experiment should teach executable tool actions, not
         # premature completion. Final done turns can be trained separately
         # after there is a larger, fully completed set of trajectories.
-        if action.done:
+        if action.done and not (include_done and row.get("agent_status") == "completed"):
             continue
-        if not action.command:
+        if not action.command and not action.done:
             raise ValueError(f"{run_id}: assistant turn lacks a command")
         user_prompt = issue
-        if latest_tool and context_chars:
+        if history and transcript and context_chars:
+            user_prompt += "\n\nRecent interaction history (context only):\n" + "\n".join(transcript)[-context_chars:]
+        elif latest_tool and context_chars:
             user_prompt += "\n\nLatest tool observation (tail):\n" + latest_tool[-context_chars:]
         canonical = json.dumps(
-            {"command": action.command, "done": False, "message": action.message},
+            {"command": action.command, "done": action.done, "message": action.message},
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -77,12 +81,13 @@ def action_examples(row: dict[str, Any], *, system_prompt: str, context_chars: i
                 {"role": "assistant", "content": canonical},
             ],
         })
+        transcript.append("Previous action:\n" + canonical)
     if not examples:
         raise ValueError(f"{run_id}: no executable assistant actions")
     return examples
 
 
-def prepare(source: Path, output: Path, *, context_chars: int = 800) -> dict[str, Any]:
+def prepare(source: Path, output: Path, *, context_chars: int = 800, include_done: bool = False, history: bool = False) -> dict[str, Any]:
     content = source.read_bytes()
     rows = [json.loads(line) for line in content.decode("utf-8").splitlines() if line.strip()]
     if not rows:
@@ -94,7 +99,7 @@ def prepare(source: Path, output: Path, *, context_chars: int = 800) -> dict[str
         if task_id in seen_tasks:
             raise ValueError(f"duplicate source task: {task_id}")
         seen_tasks.add(task_id)
-        examples.extend(action_examples(row, system_prompt=AgentRuntime._system_prompt(), context_chars=context_chars))
+        examples.extend(action_examples(row, system_prompt=AgentRuntime._system_prompt(), context_chars=context_chars, include_done=include_done, history=history))
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in examples), encoding="utf-8")
     receipt = {
@@ -103,6 +108,9 @@ def prepare(source: Path, output: Path, *, context_chars: int = 800) -> dict[str
         "distinct_tasks": len(seen_tasks),
         "action_examples": len(examples),
         "context_chars": context_chars,
+        "include_done": include_done,
+        "history": history,
+        "done_examples": sum(json.loads(e["messages"][-1]["content"])["done"] for e in examples),
         "blind_prompt_checked": True,
     }
     output.with_suffix(".receipt.json").write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -114,8 +122,10 @@ def main() -> None:
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--context-chars", type=int, default=800)
+    parser.add_argument("--include-done", action="store_true")
+    parser.add_argument("--history", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(prepare(args.source, args.output, context_chars=args.context_chars), ensure_ascii=False))
+    print(json.dumps(prepare(args.source, args.output, context_chars=args.context_chars, include_done=args.include_done, history=args.history), ensure_ascii=False))
 
 
 if __name__ == "__main__":

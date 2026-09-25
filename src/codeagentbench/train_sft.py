@@ -326,7 +326,7 @@ def _build_model_and_tokenizer(config: SFTConfig, torch: Any) -> tuple[Any, Any]
 
     from peft import LoraConfig, get_peft_model
 
-    tokenizer = AutoTokenizer.from_pretrained(config.base_model, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(config.base_model, trust_remote_code=False)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -348,7 +348,7 @@ def _build_model_and_tokenizer(config: SFTConfig, torch: Any) -> tuple[Any, Any]
             quantization_config=quantisation,
             device_map="auto",
             torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
+            trust_remote_code=False,
         )
     else:
         # AMD/ROCm images commonly cannot use bitsandbytes 4-bit kernels. A
@@ -358,7 +358,7 @@ def _build_model_and_tokenizer(config: SFTConfig, torch: Any) -> tuple[Any, Any]
             config.base_model,
             device_map="auto",
             torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
+            trust_remote_code=False,
         )
     model.config.use_cache = False
     if config.gradient_checkpointing:
@@ -386,8 +386,15 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
 
     encoded = []
     dropped = 0
+    truncated = 0
     for record in records:
-        example = encode_example(tokenizer, normalise_messages(record["messages"]), max_seq_len)
+        normalised = normalise_messages(record["messages"])
+        text = tokenizer.apply_chat_template(normalised, tokenize=False, add_generation_prompt=False)
+        if len(tokenizer(text, add_special_tokens=False)["input_ids"]) > max_seq_len:
+            truncated += 1
+            if config.raw.get("reject_truncation", False):
+                raise RuntimeError("formal training refuses truncated records; audit/filter data first")
+        example = encode_example(tokenizer, normalised, max_seq_len)
         if example is not None:
             encoded.append(example)
         else:
@@ -449,6 +456,7 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
         "train_records": len(records),
         "encoded_examples": len(encoded),
         "dropped_no_supervision": dropped,
+        "truncated_examples": truncated,
         "max_seq_len": max_seq_len,
         "gradient_accumulation_steps": grad_accum,
         "epochs": config.epochs,
