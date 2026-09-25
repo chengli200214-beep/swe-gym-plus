@@ -339,6 +339,34 @@ def test_runtime_recovery_does_not_replay_unacknowledged_action(tmp_path: Path) 
     assert decisions[0]["decision"] == "stop"
 
 
+def test_runtime_reserves_request_tokens_before_calling_model(tmp_path: Path) -> None:
+    class OversizedModel:
+        def request_token_bound(self, messages):
+            return 101
+
+        def complete(self, *args, **kwargs):
+            raise AssertionError("over-budget model request must not be sent")
+
+    task = demo_task()
+    workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "preflight")
+    result = AgentRuntime(ArtifactStore(tmp_path / "artifacts")).run(
+        task, workspace, OversizedModel(), RunConfig(max_tokens=100), run_id="preflight",
+    )
+    assert result.status == "blocked"
+    assert "before model request" in result.failure_reason
+
+
+def test_runtime_stops_tool_before_call_budget_is_exceeded(tmp_path: Path) -> None:
+    task = demo_task()
+    workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "tool-preflight")
+    result = AgentRuntime(ArtifactStore(tmp_path / "artifacts")).run(
+        task, workspace, ScriptedModel([{"command": "python -c \"raise AssertionError('must not execute')\""}]),
+        RunConfig(max_tool_calls=0), run_id="tool-preflight",
+    )
+    assert result.status == "blocked"
+    assert result.state.last_action_id is None
+
+
 def test_evaluator_uses_fresh_workspace_and_formal_test(tmp_path: Path) -> None:
     task = demo_task()
     candidate_workspace = WorkspaceManager(tmp_path / "candidate").create(task, "candidate-1")

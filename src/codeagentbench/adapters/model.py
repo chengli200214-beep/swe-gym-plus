@@ -231,3 +231,8 @@ class DeepSeekModel:
                 {"role": "user", "content": "The previous response was empty. Return one non-empty JSON action object."}
             ]
         raise AssertionError("unreachable")
+
+    def request_token_bound(self, messages: list[dict[str, str]]) -> int:
+        # Byte-level upper estimate, including two possible empty-response
+        # requests and chat framing. This deliberately errs on the high side.
+        return 2 * (len(json.dumps(messages, ensure_ascii=False).encode("utf-8")) + 512 + self.max_output_tokens)

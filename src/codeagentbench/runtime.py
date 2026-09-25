@@ -253,12 +253,22 @@ class AgentRuntime:
         visible_test_passed = False
         tested_diff: str | None = None
         self._checkpoint(state, ledger, workspace, messages)
+        clock_at = time.monotonic()
         try:
             for step in range(config.max_steps):
                 state.step = step
+                elapsed = time.monotonic() - clock_at
+                if elapsed:
+                    ledger.consume(seconds=elapsed)
+                clock_at = time.monotonic()
+                bound = getattr(model, "request_token_bound", lambda _: 1)(messages)
+                if not ledger.can_spend(tokens=bound) or ledger.snapshot.remaining_seconds <= 0:
+                    raise BudgetExceeded("insufficient budget before model request")
+                model_started = time.monotonic()
                 response: ModelResponse = model.complete(messages, temperature=config.temperature)
-                ledger.consume(tokens=response.prompt_tokens + response.completion_tokens, cost_usd=response.cost_usd)
                 self.artifact_store.append_event(run_id, {"type": "model", "content": response.text, "prompt_tokens": response.prompt_tokens, "completion_tokens": response.completion_tokens, "cost_usd": response.cost_usd, "estimated_cost_cny": response.estimated_cost_cny})
+                ledger.consume(tokens=response.prompt_tokens + response.completion_tokens, cost_usd=response.cost_usd, seconds=time.monotonic() - model_started)
+                clock_at = time.monotonic()
                 messages.append({"role": "assistant", "content": response.text})
                 try:
                     action = parse_action(response.text)
@@ -279,16 +289,19 @@ class AgentRuntime:
                         state.failure_reason = "unverified: no recognized passing post-edit visible test"
                     break
                 action_id = f"{run_id}-action-{step:04d}"
+                if not ledger.can_spend(tool_calls=1) or ledger.snapshot.remaining_seconds <= 0:
+                    raise BudgetExceeded("insufficient budget before tool execution")
                 pre_digest = workspace.digest
                 pre_diff = workspace.diff()
-                intent = ToolIntent(action_id, action.command, str(workspace.path), min(120.0, config.max_seconds), True, action_id, pre_digest)
+                intent = ToolIntent(action_id, action.command, str(workspace.path), min(120.0, ledger.snapshot.remaining_seconds), True, action_id, pre_digest)
                 state.pending_action_id = action_id
                 journal.record_intent(intent)
                 self._checkpoint(state, ledger, workspace, messages)
                 if failure_injector:
                     failure_injector("after_intent")
                 receipt = executor.execute(intent, intent_already_recorded=True)
-                ledger.consume(seconds=receipt.duration_seconds, tool_calls=1)
+                ledger.consume(seconds=time.monotonic() - clock_at, tool_calls=1)
+                clock_at = time.monotonic()
                 state.pending_action_id = None
                 state.last_action_id = action_id
                 if (
