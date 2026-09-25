@@ -12,6 +12,12 @@ from codeagentbench.tasks.manifest import Manifest, save_manifest
 REVISION = "bb94ed9e39bbeb96a7fcbfb533b80f25a7fd59cb"
 
 
+def content_sha256(path: Path) -> str:
+    """Stable JSON content hash despite Windows/Git line-ending conversion."""
+    value = json.loads(path.read_text(encoding="utf-8"))
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def main():
     import pyarrow.parquet as pq
     from huggingface_hub import hf_hub_download
@@ -50,7 +56,10 @@ def main():
                "selection": "repo=getmoto/moto; 1<=FAIL_TO_PASS count<=5; PASS_TO_PASS count<=30; hash seed cab-expanded-v1",
                "eligible_fresh": len(fresh), "train_candidates": len(train_ids), "eval": len(eval_ids),
                "manifest_sha256": hashlib.sha256((args.output / "manifest.json").read_bytes()).hexdigest(),
-               "split_sha256": hashlib.sha256((args.output / "split.json").read_bytes()).hexdigest()}
+               "split_sha256": hashlib.sha256((args.output / "split.json").read_bytes()).hexdigest(),
+               "hash_note": "Byte hashes describe the initial local freeze; content hashes survive Git CRLF/LF conversion",
+               "manifest_content_sha256": content_sha256(args.output / "manifest.json"),
+               "split_content_sha256": content_sha256(args.output / "split.json")}
     (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(receipt))
 

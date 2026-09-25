@@ -8,5 +8,10 @@
   "train_candidates": 67,
   "eval": 20,
   "manifest_sha256": "7f26b0e7f8cc6a7a30687213ac0a11959f7ee9b4ed3d52063365f08fcc88d9bb",
-  "split_sha256": "35d853d3de41b5c65b793b5ce80681b155cef049b7914abc3e958e6bbc900d4a"
+  "split_sha256": "35d853d3de41b5c65b793b5ce80681b155cef049b7914abc3e958e6bbc900d4a",
+  "hash_note": "Original byte hashes describe the Windows CRLF freeze. Added LF and canonical JSON hashes identify the same unchanged data across Git checkouts.",
+  "manifest_lf_sha256": "2075f833a100b8dc182e5723e9b416be61d3f16dab6146af1b45330349dd792c",
+  "split_lf_sha256": "14b2e53b181ae647fc18a1bdbf340ebaa943e9f9d1cb379920de23346c16ce57",
+  "manifest_content_sha256": "d4f63eb1ce272e16501ecc45adf55e852eb36718b458f007af14b6ea5134c76b",
+  "split_content_sha256": "3212c2f1e754676535fe58787c3f7d5554720c4c8c058e98ff7c66c3c488f629"
 }
