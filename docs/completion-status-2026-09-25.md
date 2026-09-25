@@ -4,10 +4,10 @@
 
 ## 当前证据
 
-- 本地与 GitHub `main` 已同步到 `3499f59`。云端新工作树 `/mnt/workspace/swe-gym-plus-next` 也已切到该提交，Harness/分组测试通过；旧工作树 `/mnt/workspace/swe-gym-plus-current` 仍在 `5b12cef` 并保留其未提交的 3072-token 配置修改。后续命令必须明确使用新工作树，不要覆盖旧工作树或私有实验目录。
+- 本地/GitHub 与云端新工作树 `/mnt/workspace/swe-gym-plus-next` 已同步到 `2b31bf2`；Harness/分组测试通过。旧工作树 `/mnt/workspace/swe-gym-plus-current` 仍在 `5b12cef` 并保留其未提交的 3072-token 配置修改。后续命令必须明确使用新工作树，不要覆盖旧工作树或私有实验目录。
 - 当前云端 5 个不同 Moto 任务的独立评测通过轨迹产生 46 个相关的动作样本；0.5B BF16 LoRA 训练 1 epoch/46 steps。两项开发任务 `5876`、`5085` 的 Base/SFT 对照仍是 0/2，对解决率提升没有证据。详情与路径见 [ModelScope 交接记录](modelscope-experiment-handoff.md)。
 - 早期 3B QLoRA v4 报告属于另一批实验；报告中的原始数据和权重不在当前公开仓库或 ModelScope 工作区。特别是 `moto-4950` 已被该实验用于训练，不能再作为继承该权重的盲测任务。
-- 云端使用本次新分组脚本核查了现有 `train-actions-5passed.jsonl`：46 条训练样本未包含非训练任务；这不是新增轨迹或泛化评测。新增准入检查 `getmoto__moto-6641`：未修复版 1 failed / 6 passed，官方补丁版 7 passed，故可作为后续训练采样候选；尚无它的 Agent 成功轨迹。
+- 云端使用本次新分组脚本核查了现有 `train-actions-5passed.jsonl`：46 条训练样本未包含非训练任务；这不是新增轨迹或泛化评测。新增准入检查 `getmoto__moto-6641`：未修复版 1 failed / 6 passed，官方补丁版 7 passed，故可作为后续训练采样候选；尚无它的 Agent 成功轨迹。完整控制报告保存在私有 `/mnt/workspace/swe-gym-plus/experiments/quality/moto-6641-20260925.json`，没有上传公开仓库。
 
 ## 对照原计划的阶段状态
 

@@ -2,6 +2,12 @@
 
 本记录只写入已核实的状态和复现入口，不包含 API key 或原始轨迹。项目早期的 SFT v4 报告见 [`comparison.md`](../experiments/sft-v0/evaluation/comparison.md)；报告中的 6 条训练轨迹和 3B LoRA checkpoint **不在当前公开仓库或本次 ModelScope 工作区中**，不能仅凭报告宣称已在此实例复现训练。
 
+## 2026-09-25：工程验收与新增训练候选准入
+
+GitHub `main`、本地与云端 `/mnt/workspace/swe-gym-plus-next` 已同步到 `2b31bf2`。旧工作树 `/mnt/workspace/swe-gym-plus-current` 的未提交训练配置与 `/mnt/workspace/swe-gym-plus/experiments/` 中的私有数据均未覆盖。云端新工作树的 Harness 回归测试通过；现有 46 条私有动作样本通过任务级分组检查，没有混入开发或测试任务。新增共享预算耗尽前阻止多候选/评测启动的保护，但仍不能把未计价的 DeepSeek `max_cost_usd` 称为真实消费硬限制。
+
+`getmoto__moto-6641` 经模型无关控制检查准入：未修复版本 1 failed / 6 passed；官方补丁版本 7 passed。完整私有报告为 `/mnt/workspace/swe-gym-plus/experiments/quality/moto-6641-20260925.json`。它被分配到训练候选池，**没有**产生通过独立评测的 Agent 轨迹；成功轨迹仍只有原来的 5 个不同任务。现有 bash 执行器也未提供工作目录外的系统级隔离，因此新增真实 rollout 之前仍须处理隔离与费用控制。
+
 ## 2026-09-25：动作级 SFT 与固定留出集复测（最新）
 
 上一轮的每任务一条长轨迹训练在 2048 token 上限下严重截断；训练记录的原始长度为 4,197–15,712 token。为验证工具协议学习，使用 [`scripts/prepare_action_sft.py`](../scripts/prepare_action_sft.py) 将同一批 **5 个不同任务、独立评测通过** 的轨迹转为 **46 条命令动作级监督样本**，统一为 Harness 所需 JSON 动作格式。46 条是相关的动作样本，**不是 46 个独立任务**；完成动作不进入这次训练。源数据 SHA-256 为 `8eac5ccdc54a6ed3486145bc859e6b3ae2cc8a4ea6ee2f97e1c9597305e7842d`。私有数据及收据保存在 `/mnt/workspace/swe-gym-plus/experiments/sft-bootstrap/data/train-actions-5passed.{jsonl,receipt.json}`，不上传公开仓库。
