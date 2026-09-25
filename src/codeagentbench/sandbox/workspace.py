@@ -232,7 +232,7 @@ class WorkspaceManager:
         subprocess.run(["git", "init", "--quiet"], cwd=target, check=True, capture_output=True)
         subprocess.run(["git", "add", "-A"], cwd=target, check=True, capture_output=True)
         subprocess.run(
-            ["git", "-c", "user.name=CodeAgentBench", "-c", "user.email=bench@localhost", "commit", "--quiet", "-m", "base"],
+            ["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-c", "user.name=CodeAgentBench", "-c", "user.email=bench@localhost", "commit", "--quiet", "-m", "base"],
             cwd=target,
             check=True,
             capture_output=True,
