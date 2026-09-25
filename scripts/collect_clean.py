@@ -29,7 +29,7 @@ def main() -> int:
     parser.add_argument("--max-tokens", type=int, default=120000)
     parser.add_argument("--max-seconds", type=int, default=600)
     parser.add_argument("--prompt-key", action="store_true")
-    parser.add_argument("--seed-exports", type=Path)
+    parser.add_argument("--seed-exports", type=Path, nargs="+")
     args = parser.parse_args()
     if os.name == "nt":
         raise RuntimeError("collection requires a Linux bubblewrap host")
@@ -45,7 +45,7 @@ def main() -> int:
         (root / name).mkdir(exist_ok=True)
     if args.seed_exports:
         import shutil
-        for source in sorted(args.seed_exports.glob("*.jsonl")):
+        for source in sorted(p for directory in args.seed_exports for p in directory.glob("*.jsonl")):
             row = json.loads(source.read_text())
             if row["task_id"] not in args.tasks:
                 raise ValueError("seed export outside campaign train tasks")
@@ -136,6 +136,14 @@ def main() -> int:
                 # Authentication, balance, or provider failure: stop the whole
                 # campaign instead of blindly issuing more paid requests.
                 (root / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+                return 2
+            status = json.loads(summary.read_text())["status"]
+            if status in {"interrupted", "cancelled"}:
+                # Runtime can save a summary after an ambiguous provider error.
+                # A summary's presence must not authorize the next paid task.
+                results.append({"task": task_id, "run_id": run_id, "status": status, "campaign_halted": True})
+                (root / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+                print(json.dumps(results[-1]), flush=True)
                 return 2
             evaluation_log = root / "logs" / (run_id + "-evaluation.log")
             code = run(["evaluate-run", manifest, run_id, "--repo-root", str(root)], evaluation_log, timeout=400)
