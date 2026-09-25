@@ -4,6 +4,8 @@
 
 ## 当前证据
 
+- 后续修复已推送到 GitHub：`58edac6` 使 SWE-Gym 准入控制的测试阶段强制使用 bubblewrap，并允许为临时控制工作区显式指定只读 Git 缓存；`a84071e` 在隔离不可用时记录未准入结果而非异常中断；`8f4e28e` 使新动作级 SFT 样本生成默认拒绝初始提示中暴露评测命令的轨迹。这些提交均通过 GitHub CI；新云端工作树已同步到 `8f4e28e`，无密钥定向回归通过。
+- 新候选 `getmoto__moto-5699` 的首次隔离准入检查**未执行测试**：当前 ModelScope 实例缺少 bubblewrap，旧代码运行时即停止。它仍处于 `unassigned`，不能标记为已准入或已采集。待安装隔离工具后重跑控制检查。未调用 DeepSeek API，也未产生新的成功轨迹。
 - 云端新工作树 `/mnt/workspace/swe-gym-plus-next` 已同步代码提交 `b56e7b6`；本地 76 项测试通过、1 项跳过，GitHub CI 通过，云端不带 API 密钥的 4 项关键回归测试通过。旧工作树 `/mnt/workspace/swe-gym-plus-current` 保留不动。后续命令必须明确使用新工作树，不要覆盖旧工作树或私有实验目录。
 - 当前云端 5 个不同 Moto 任务的独立评测通过轨迹产生 46 个相关的动作样本；0.5B BF16 LoRA 训练 1 epoch/46 steps。两项开发任务 `5876`、`5085` 的 Base/SFT 对照仍是 0/2，对解决率提升没有证据。详情与路径见 [ModelScope 交接记录](modelscope-experiment-handoff.md)。
 - 早期 3B QLoRA v4 报告属于另一批实验；报告中的原始数据和权重不在当前公开仓库或 ModelScope 工作区。特别是 `moto-4950` 已被该实验用于训练，不能再作为继承该权重的盲测任务。
