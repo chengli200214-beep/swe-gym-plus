@@ -2,6 +2,23 @@
 
 本记录只写入已核实的状态和复现入口，不包含 API key 或原始轨迹。项目早期的 SFT v4 报告见 [`comparison.md`](../experiments/sft-v0/evaluation/comparison.md)；报告中的 6 条训练轨迹和 3B LoRA checkpoint **不在当前公开仓库或本次 ModelScope 工作区中**，不能仅凭报告宣称已在此实例复现训练。
 
+## 2026-09-25：动作级 SFT 与固定留出集复测（最新）
+
+上一轮的每任务一条长轨迹训练在 2048 token 上限下严重截断；训练记录的原始长度为 4,197–15,712 token。为验证工具协议学习，使用 [`scripts/prepare_action_sft.py`](../scripts/prepare_action_sft.py) 将同一批 **5 个不同任务、独立评测通过** 的轨迹转为 **46 条命令动作级监督样本**，统一为 Harness 所需 JSON 动作格式。46 条是相关的动作样本，**不是 46 个独立任务**；完成动作不进入这次训练。源数据 SHA-256 为 `8eac5ccdc54a6ed3486145bc859e6b3ae2cc8a4ea6ee2f97e1c9597305e7842d`。私有数据及收据保存在 `/mnt/workspace/swe-gym-plus/experiments/sft-bootstrap/data/train-actions-5passed.{jsonl,receipt.json}`，不上传公开仓库。
+
+云端采用 [`configs/sft-action-5passed-amd.yaml`](../configs/sft-action-5passed-amd.yaml) 训练 Qwen2.5-Coder-0.5B-Instruct 的 BF16 LoRA（非 QLoRA）；1 epoch、`max_seq_len=3072`、46 条编码样本、0 条无监督丢弃、`global_step=46`、最终 `train_loss≈1.334`。真实 tokenizer 审计显示这 46 条样本最长 3,024 token，故本次未因 3,072 上限截断。适配器为 `/mnt/workspace/swe-gym-plus/experiments/sft-bootstrap/checkpoints/qwen2.5-coder-0.5b-actions-5passed-lora/adapter_model.safetensors`（35,231,704 字节），同目录有 `train_metrics.json`。本轮不需要 DeepSeek API；训练在 ModelScope AMD 实例 GPU 上完成。
+
+与下节完全相同的两个留出任务、预算和独立评测流程得到：
+
+| 留出任务 | 新运行 ID | Agent / 工具调用 / token / 补丁 | 独立评测 |
+|---|---|---|---|
+| `getmoto__moto-5876` | `compare-5876-action-sft-20260925` | blocked / 5 / 12,615 / 0 字节；下一步超过 16,000 token 预算 | failed，1 failed / 2 passed |
+| `getmoto__moto-5085` | `compare-5085-action-sft-20260925` | failed / 6 / 12,788 / 0 字节；重复搜索同一源码位置 | failed，1 failed / 77 passed |
+
+新模型至少学会了发起工具调用（旧 Base 和每任务一条轨迹的 SFT 均为 0 次），但**任务解决率仍为 0/2，没有修复能力提升的证据**。两次 Agent 运行均无代码补丁，隔离评测仍保持未修复失败。运行数据位于 `/mnt/workspace/swe-gym-plus/experiments/base-sft-5passed/runs/compare-{5876,5085}-action-sft-20260925/`，评测目录位于同一实验根下的 `evaluations/`。下一步应增加不同任务的真实通过轨迹，并专门抑制重复测试/搜索，再用固定留出集复测；不要通过反复训练这 5 个任务或调留出集来声称泛化。
+
+云端工作树本次在 `5b12cef` 基础上通过编辑器同步了与 GitHub `4467ccf` 相同的 3,072-token 配置；云端连接 GitHub 曾超时，未成功切换到新提交。恢复连接后先检查 `git status`，再同步提交，**不要覆盖 `/mnt/workspace/swe-gym-plus/experiments/` 中的私有实验数据**。公开仓库保存代码、配置和本记录，不含原始轨迹与模型权重。
+
 ## 2026-09-25：五样本 SFT 的首次有效留出对照
 
 在已保存的五样本 Qwen2.5-Coder-0.5B-Instruct LoRA 上，使用云端本地基座模型与 LoRA 适配器分别运行两个不在这五条训练数据中的 getmoto 任务。运行代码为 `b512dc9`；共同预算为 8 步、12 次工具调用、16,000 总 token、600 秒、单次最多 512 新 token。均使用同一 SWE-Gym manifest、相同独立评测流程和已补齐的测试依赖，无需 DeepSeek API。原始运行目录位于 `/mnt/workspace/swe-gym-plus/experiments/base-sft-5passed/`，仍只保存在 ModelScope 工作区，**没有公开上传轨迹或权重**。
