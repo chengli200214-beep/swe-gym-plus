@@ -1,0 +1,26 @@
+base_model: /mnt/workspace/models/Qwen2.5-Coder-0.5B-Instruct
+train_file: /mnt/workspace/swe-gym-plus/experiments/sft-bootstrap/data/train-actions-5passed.jsonl
+output_dir: /mnt/workspace/swe-gym-plus/experiments/sft-bootstrap/checkpoints/qwen2.5-coder-0.5b-actions-5passed-lora
+
+# Turn-level command supervision from five independently passed tasks.
+# Multiple actions from one task are correlated, not independent task samples.
+epochs: 1
+learning_rate: 0.0001
+per_device_batch_size: 1
+gradient_accumulation_steps: 1
+max_seq_len: 2048
+gradient_checkpointing: false
+load_in_4bit: false
+bnb_quant_type: nf4
+bnb_double_quant: true
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+seed: 42
+logging_steps: 5
+optim: adamw_torch
+oom_ladder:
+  - max_seq_len: 2048
+    gradient_accumulation_steps: 1
+  - max_seq_len: 1024
+    gradient_accumulation_steps: 2
