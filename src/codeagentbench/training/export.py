@@ -47,6 +47,12 @@ def collect_provenance(events_path: str | Path, events: list[dict[str, Any]]) ->
     prompt_tokens = sum(int(event.get("prompt_tokens") or 0) for event in events if event.get("type") == "model")
     completion_tokens = sum(int(event.get("completion_tokens") or 0) for event in events if event.get("type") == "model")
     cost_usd = sum(float(event.get("cost_usd") or 0.0) for event in events if event.get("type") == "model")
+    model_events = [event for event in events if event.get("type") == "model"]
+    estimated_cost_cny = (
+        sum(float(event["estimated_cost_cny"]) for event in model_events)
+        if model_events and all(event.get("estimated_cost_cny") is not None for event in model_events)
+        else None
+    )
     tool_calls = sum(1 for event in events if event.get("type") == "tool")
 
     budget = summary.get("budget") or checkpoint.get("budget") or {}
@@ -68,6 +74,7 @@ def collect_provenance(events_path: str | Path, events: list[dict[str, Any]]) ->
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
         "cost_usd": cost_usd,
+        "estimated_cost_cny": estimated_cost_cny,
         "tool_calls": tool_calls,
     }
 

@@ -16,6 +16,7 @@ class ModelResponse:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_usd: float = 0.0
+    estimated_cost_cny: float | None = None
 
 
 class ChatModel(Protocol):
@@ -149,7 +150,8 @@ class DeepSeekModel:
             "max_tokens": self.max_output_tokens,
         }
         prompt_tokens = completion_tokens = 0
-        cost_usd = 0.0
+        estimated_cost_cny = 0.0
+        cost_estimate_available = True
         for empty_attempt in range(2):
             response = None
             for attempt in range(4):
@@ -172,12 +174,25 @@ class DeepSeekModel:
             response.raise_for_status()
             payload = response.json()
             usage = payload.get("usage", {})
-            prompt_tokens += int(usage.get("prompt_tokens", 0))
-            completion_tokens += int(usage.get("completion_tokens", 0))
-            cost_usd += float(payload.get("cost_usd", 0.0))
+            prompt = int(usage.get("prompt_tokens", 0))
+            completion = int(usage.get("completion_tokens", 0))
+            prompt_tokens += prompt
+            completion_tokens += completion
+            if self.model == "deepseek-flash":
+                if "prompt_tokens" not in usage or "completion_tokens" not in usage:
+                    cost_estimate_available = False
+                hit = int(usage.get("prompt_cache_hit_tokens", 0))
+                miss = int(usage.get("prompt_cache_miss_tokens", prompt - hit))
+                if hit < 0 or miss < 0 or hit + miss > prompt:
+                    raise ValueError("invalid DeepSeek cache token usage")
+                # Conservative peak-hour CNY estimate, not a provider invoice or hard cap.
+                estimated_cost_cny += ((prompt - hit) * 2.0 + hit * 0.04 + completion * 8.0) / 1_000_000
             text = payload["choices"][0]["message"].get("content") or ""
             if text.strip() or empty_attempt:
-                return ModelResponse(text, prompt_tokens, completion_tokens, cost_usd)
+                return ModelResponse(
+                    text, prompt_tokens, completion_tokens,
+                    estimated_cost_cny=estimated_cost_cny if self.model == "deepseek-flash" and cost_estimate_available else None,
+                )
             request["messages"] = messages + [
                 {"role": "user", "content": "The previous response was empty. Return one non-empty JSON action object."}
             ]

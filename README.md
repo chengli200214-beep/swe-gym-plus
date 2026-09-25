@@ -58,9 +58,16 @@ For the API baseline, set `DEEPSEEK_API_KEY` in a local environment and use a
 manifest whose `repo`, `base_commit` and evaluation fields have been frozen.
 The adapter records the returned model usage; it never stores the API key in an
 artifact.
-The DeepSeek adapter currently records token usage but not a real USD charge;
-its `--max-cost-usd` setting is therefore not an effective API spending cap.
-Use token, step and time budgets until provider-aware accounting is added.
+For `deepseek-flash`, events also contain `estimated_cost_cny` from returned
+cache-hit/miss and output-token usage at the published peak-hour rates. This is
+an estimate, not a provider bill or a spending limit; it is null if usage is
+missing or the model has no configured rate. The adapter does not know a real
+USD charge, so `--max-cost-usd` is **not** an effective DeepSeek spending cap.
+Check the provider balance before and after a bounded experiment; use token,
+step and time budgets as additional guards, not as a substitute for a hard
+currency cap.
+Recheck the [official pricing](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)
+before each paid experiment, since rates may change.
 
 Security boundary: the current local bash executor checks its starting working
 directory but does **not** confine the shell process to that directory. Model-

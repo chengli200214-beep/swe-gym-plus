@@ -34,6 +34,8 @@ def test_deepseek_request_has_bounded_output_and_non_thinking_default(monkeypatc
     assert captured["request"]["max_tokens"] == 4096
     assert response.prompt_tokens == 12
     assert response.completion_tokens == 4
+    assert response.estimated_cost_cny == pytest.approx((12 * 2 + 4 * 8) / 1_000_000)
+    assert response.cost_usd == 0.0
 
 
 def test_deepseek_output_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,6 +71,37 @@ def test_deepseek_retries_one_empty_response_and_counts_both_uses(monkeypatch: p
     assert response.text == '{"command": "pwd", "done": false}'
     assert response.prompt_tokens == 20
     assert response.completion_tokens == 10
+    assert response.estimated_cost_cny == pytest.approx((20 * 2 + 10 * 8) / 1_000_000)
+
+
+def test_deepseek_counts_cached_input_at_separate_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    def post(url: str, *, headers: dict, json: dict, timeout: float):
+        return SimpleNamespace(
+            status_code=200,
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "choices": [{"message": {"content": '{"done": true}'}}],
+                "usage": {"prompt_tokens": 100, "prompt_cache_hit_tokens": 60,
+                          "prompt_cache_miss_tokens": 40, "completion_tokens": 10},
+            },
+        )
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(post=post, RequestError=Exception))
+    response = DeepSeekModel(api_key="test-key").complete([{"role": "user", "content": "hi"}])
+    assert response.estimated_cost_cny == pytest.approx((60 * 0.04 + 40 * 2 + 10 * 8) / 1_000_000)
+
+
+def test_deepseek_missing_usage_has_no_cost_estimate(monkeypatch: pytest.MonkeyPatch) -> None:
+    def post(url: str, *, headers: dict, json: dict, timeout: float):
+        return SimpleNamespace(
+            status_code=200,
+            raise_for_status=lambda: None,
+            json=lambda: {"choices": [{"message": {"content": '{"done": true}'}}]},
+        )
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(post=post, RequestError=Exception))
+    response = DeepSeekModel(api_key="test-key").complete([{"role": "user", "content": "hi"}])
+    assert response.estimated_cost_cny is None
 
 
 def test_deepseek_stops_after_two_empty_responses(monkeypatch: pytest.MonkeyPatch) -> None:

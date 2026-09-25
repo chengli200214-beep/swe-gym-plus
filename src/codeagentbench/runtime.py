@@ -249,7 +249,7 @@ class AgentRuntime:
                 state.step = step
                 response: ModelResponse = model.complete(messages, temperature=config.temperature)
                 ledger.consume(tokens=response.prompt_tokens + response.completion_tokens, cost_usd=response.cost_usd)
-                self.artifact_store.append_event(run_id, {"type": "model", "content": response.text, "prompt_tokens": response.prompt_tokens, "completion_tokens": response.completion_tokens, "cost_usd": response.cost_usd})
+                self.artifact_store.append_event(run_id, {"type": "model", "content": response.text, "prompt_tokens": response.prompt_tokens, "completion_tokens": response.completion_tokens, "cost_usd": response.cost_usd, "estimated_cost_cny": response.estimated_cost_cny})
                 messages.append({"role": "assistant", "content": response.text})
                 try:
                     action = parse_action(response.text)
