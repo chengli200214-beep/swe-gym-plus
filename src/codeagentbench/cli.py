@@ -13,6 +13,7 @@ from pathlib import Path
 from codeagentbench.adapters.model import DeepSeekModel, LocalHFModel, ScriptedModel
 from codeagentbench.models import Candidate, RunConfig
 from codeagentbench.sandbox.workspace import Workspace, WorkspaceManager
+from codeagentbench.sandbox.backends import ISOLATED_BACKENDS, selected_backend
 from codeagentbench.storage.artifacts import ArtifactStore
 from codeagentbench.tasks.manifest import import_swe_gym, load_manifest, save_manifest
 
@@ -36,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--model-path", type=Path)
     run.add_argument("--base-model-path", type=Path)
     run.add_argument("--max-new-tokens", type=int, default=512)
+    run.add_argument("--temperature", type=float, default=0.2)
     run.add_argument("--run-id")
     run.add_argument("--resume", action="store_true", help="resume an acknowledged checkpoint with its original budget")
     run.add_argument("--max-steps", type=int, default=8)
@@ -48,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     evaluate_run.add_argument("manifest", type=Path)
     evaluate_run.add_argument("run_id")
     evaluate_run.add_argument("--repo-root", type=Path, default=Path("artifacts"))
+    evaluate_run.add_argument("--timeout", type=float, default=600.0)
     quality = sub.add_parser("quality-check")
     quality.add_argument("manifest", type=Path)
     quality.add_argument("task_id")
@@ -58,6 +61,11 @@ def main(argv: list[str] | None = None) -> int:
     export_sft.add_argument("output", type=Path)
     export_sft.add_argument("--include-unsuccessful", action="store_true")
     args = parser.parse_args(argv)
+    try:
+        backend = selected_backend()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if args.command == "validate-manifest":
         manifest = load_manifest(args.path)
         print(json.dumps({"dataset": manifest.dataset, "revision": manifest.revision, "tasks": len(manifest.tasks)}))
@@ -70,8 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         from codeagentbench.tasks.quality import run_controls
 
         manifest = load_manifest(args.manifest)
-        if manifest.dataset == "SWE-Gym" and os.getenv("CODEAGENTBENCH_EXECUTOR") != "bwrap":
-            print("SWE-Gym quality controls require CODEAGENTBENCH_EXECUTOR=bwrap", file=sys.stderr)
+        if manifest.dataset == "SWE-Gym" and backend not in ISOLATED_BACKENDS:
+            print("SWE-Gym quality controls require CODEAGENTBENCH_EXECUTOR=bwrap or nsjail", file=sys.stderr)
             return 2
         task = next((item for item in manifest.tasks if item.instance_id == args.task_id), None)
         if task is None:
@@ -97,8 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         if os.getenv("DEEPSEEK_API_KEY"):
             print("evaluation must run without DEEPSEEK_API_KEY in its process environment", file=sys.stderr)
             return 2
-        if os.getenv("CODEAGENTBENCH_EXECUTOR") != "bwrap":
-            print("evaluate-run requires CODEAGENTBENCH_EXECUTOR=bwrap for candidate test isolation", file=sys.stderr)
+        if backend not in ISOLATED_BACKENDS:
+            print("evaluate-run requires CODEAGENTBENCH_EXECUTOR=bwrap or nsjail for candidate test isolation", file=sys.stderr)
             return 2
         summary_path = args.repo_root / "runs" / args.run_id / "summary.json"
         if not summary_path.is_file():
@@ -113,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         from codeagentbench.verification.evaluator import Evaluator
 
         candidate = Candidate("candidate-0", args.run_id, str(summary.get("diff") or ""), str(summary.get("status") or "unknown"))
-        evaluation = Evaluator(args.repo_root / "evaluations").evaluate(task, candidate)
+        evaluation = Evaluator(args.repo_root / "evaluations").evaluate(task, candidate, timeout_seconds=args.timeout)
         ArtifactStore(args.repo_root).append_event(args.run_id, {"type": "evaluation", **evaluation.to_dict()})
         print(json.dumps({"run_id": args.run_id, "evaluation": evaluation.to_dict()}, ensure_ascii=False))
         return 0 if evaluation.passed else 1
@@ -125,6 +133,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.script:
         model = ScriptedModel(json.loads(args.script.read_text(encoding="utf-8")))
     elif args.model_backend == "local":
+        if manifest.dataset == "SWE-Gym" and backend not in ISOLATED_BACKENDS:
+            print("SWE-Gym local-model runs require an isolated executor", file=sys.stderr)
+            return 2
         if not args.model_path:
             print("--model-path is required with --model-backend local", file=sys.stderr)
             return 2
@@ -137,8 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         if not args.skip_evaluation:
             print("DeepSeek runs require --skip-evaluation; run evaluate-run later without the API key", file=sys.stderr)
             return 2
-        if os.getenv("CODEAGENTBENCH_EXECUTOR") != "bwrap":
-            print("DeepSeek runs require CODEAGENTBENCH_EXECUTOR=bwrap to isolate model-generated commands", file=sys.stderr)
+        if backend not in ISOLATED_BACKENDS:
+            print("DeepSeek runs require CODEAGENTBENCH_EXECUTOR=bwrap or nsjail to isolate model-generated commands", file=sys.stderr)
             return 2
         if "DEEPSEEK_MIN_BALANCE_CNY" not in os.environ:
             print("DeepSeek runs require DEEPSEEK_MIN_BALANCE_CNY to stop before the spending floor", file=sys.stderr)
@@ -150,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.resume:
         if not args.run_id:
             parser.error("--resume requires --run-id")
-        workspace_path = args.repo_root / run_id / "workspace"
+        workspace_path = args.repo_root / run_id / ("sandbox/workspace" if backend == "nsjail" else "workspace")
         if not workspace_path.is_dir():
             parser.error("resume workspace is missing")
         workspace = Workspace(run_id, workspace_path, task.base_commit)
@@ -159,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     from codeagentbench.runtime import AgentRuntime
     config = RunConfig(
         model=getattr(model, "model", "scripted"),
+        temperature=args.temperature,
         max_steps=args.max_steps,
         max_tool_calls=args.max_tool_calls,
         max_tokens=args.max_tokens,

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from codeagentbench.harness.recovery import ActionJournal
 from codeagentbench.models import ToolIntent, ToolReceipt
+from codeagentbench.sandbox.backends import BACKENDS
 from codeagentbench.sandbox.workspace import workspace_digest
 
 
@@ -26,7 +27,7 @@ class BashExecutor:
     """
 
     def __init__(self, workspace: str | Path, journal: ActionJournal | None = None, output_limit: int = 20_000, *, backend: str = "local", approved_cache_root: str | Path | None = None) -> None:
-        if backend not in {"local", "bwrap"}:
+        if backend not in BACKENDS:
             raise ValueError(f"unknown executor backend: {backend}")
         self.workspace = Path(workspace).resolve()
         self.journal = journal
@@ -45,6 +46,17 @@ class BashExecutor:
         if self.journal and not intent_already_recorded:
             self.journal.record_intent(intent)
         started = time.monotonic()
+        if self.backend == "nsjail":
+            # Import only on Linux; all three task execution paths use this
+            # same supervisor and no failure ever falls back to a host shell.
+            from codeagentbench.sandbox.nsjail import NsjailSandbox
+            result = NsjailSandbox(self.workspace).execute(intent.command, cwd, intent.timeout_seconds, self.output_limit)
+            receipt = ToolReceipt(intent.action_id, intent.command, result.exit_code,
+                                  result.stdout, result.stderr, time.monotonic() - started,
+                                  result.status == "timeout", workspace_digest(self.workspace), result.status)
+            if self.journal:
+                self.journal.record_receipt(receipt)
+            return receipt
         env = {"PATH": "/usr/bin:/bin"} if self.backend == "bwrap" else self._tool_environment()
         env["CI"] = "1"
         command_text, temporary_script = self._normalize_command(intent.command)

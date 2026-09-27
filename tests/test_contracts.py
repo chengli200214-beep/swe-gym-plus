@@ -77,11 +77,14 @@ def test_parse_action_repairs_unescaped_quotes_inside_command() -> None:
     assert action.done is False
 
 
-def test_parse_action_repairs_explicit_truncated_fenced_command() -> None:
-    action = parse_action('```json\n{"command": "printf \'hello\\n\'')
-    assert action.command == "printf 'hello\\n'"
-    assert action.done is False
-    assert "truncated" in action.message
+def test_parse_action_rejects_explicit_truncated_fenced_command() -> None:
+    with pytest.raises(ValueError, match="not valid JSON"):
+        parse_action('```json\n{"command": "printf \'hello\\n\'')
+
+
+def test_parse_action_rejects_string_done() -> None:
+    with pytest.raises(ValueError, match="boolean"):
+        parse_action('{"command":"echo ok","done":"false"}')
 
 
 def test_parse_action_repairs_prose_and_shell_single_quote_escape() -> None:

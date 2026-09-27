@@ -23,7 +23,16 @@ frozen SWE-Gym revision, a quality report for every task, and complete artifacts
 - P3/GRPO: formal reward interface is present, but no GRPO benchmark claim is
   made. GRPO remains a separate follow-up experiment.
 
-The latest experiment results (2026-09-27) are in
+The latest same-machine AutoDL experiment (2026-09-27) is in
+[`docs/AUTODL_EXPERIMENT_20260927.md`](docs/AUTODL_EXPERIMENT_20260927.md).
+The NsJail backend runs agent tools, admission controls and independent tests
+on the 5090 instance without falling back to an unisolated host shell. The 7B
+diagnostics produced one real but incorrect edit; autonomous repair is still
+unproven. Thirteen runs on one task are not thirteen successful trajectories.
+The next acceptance gate is documented in
+[`docs/EXECUTION_PLAN_20260927.md`](docs/EXECUTION_PLAN_20260927.md).
+
+Earlier training results (2026-09-27) are in
 [`docs/SERVER_HANDOFF_20260927.md`](docs/SERVER_HANDOFF_20260927.md),
 with a machine-readable summary in
 [`experiments/progress-20260927/summary.json`](experiments/progress-20260927/summary.json).

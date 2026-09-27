@@ -12,6 +12,7 @@ from typing import Callable
 
 from codeagentbench.adapters.model import ChatModel, ModelResponse
 from codeagentbench.adapters.action import parse_action
+from codeagentbench.sandbox.backends import selected_backend
 from codeagentbench.harness.budget import BudgetExceeded, BudgetLedger, BudgetSnapshot
 from codeagentbench.harness.context import ContextManager
 from codeagentbench.harness.context_history import prepare_context
@@ -67,7 +68,7 @@ class AgentRuntime:
         run_id = run_id or f"{task.instance_id}-{int(time.time())}"
         run_dir = self.artifact_store.run_dir(run_id) if resume else self.artifact_store.start_run(run_id, task.instance_id, config)
         journal = ActionJournal(run_dir / "actions.jsonl")
-        executor = BashExecutor(workspace.path, journal, backend=os.getenv("CODEAGENTBENCH_EXECUTOR", "local"))
+        executor = BashExecutor(workspace.path, journal, backend=selected_backend())
         ledger = ledger or BudgetLedger(config.max_tokens, config.max_seconds, config.max_cost_usd, config.max_tool_calls)
         state = RunState(run_id, task.instance_id, status="running", remaining_tokens=config.max_tokens, remaining_seconds=config.max_seconds)
         context = ContextManager(task.issue)

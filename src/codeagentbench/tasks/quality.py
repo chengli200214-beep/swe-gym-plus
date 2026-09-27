@@ -11,6 +11,7 @@ from pathlib import Path
 
 from codeagentbench.models import EvalSpec, TaskRecord, ToolIntent
 from codeagentbench.sandbox.executor import BashExecutor
+from codeagentbench.sandbox.backends import ISOLATED_BACKENDS, selected_backend
 from codeagentbench.sandbox.workspace import WorkspaceManager
 
 
@@ -57,8 +58,9 @@ def _apply_patch(workspace: Path, patch: str) -> tuple[bool, str]:
 
 def _run_tests(workspace: Path, command: str, timeout: float = 600.0, *, cache_root: str | Path | None = None) -> tuple[int | None, str, str, float]:
     started = time.monotonic()
-    if os.getenv("CODEAGENTBENCH_EXECUTOR") == "bwrap":
-        receipt = BashExecutor(workspace, output_limit=200_000, backend="bwrap", approved_cache_root=cache_root).execute(
+    backend = selected_backend()
+    if backend in ISOLATED_BACKENDS:
+        receipt = BashExecutor(workspace, output_limit=200_000, backend=backend, approved_cache_root=cache_root).execute(
             ToolIntent("quality-control", command, str(workspace), timeout)
         )
         return receipt.exit_code, receipt.stdout, receipt.stderr, time.monotonic() - started

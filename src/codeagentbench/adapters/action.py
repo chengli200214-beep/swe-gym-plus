@@ -45,10 +45,6 @@ _MALFORMED_ACTION = re.compile(
     r'''(?:\s*,\s*["']message["']\s*:\s*["'](?P<message>.*?)["'])?\s*\}\s*$''',
     flags=re.DOTALL | re.IGNORECASE,
 )
-_TRUNCATED_COMMAND_ACTION = re.compile(
-    r'''^\s*\{\s*["']command["']\s*:\s*["'](?P<command>.*)$''',
-    flags=re.DOTALL | re.IGNORECASE,
-)
 _EDIT_COMMAND_FENCE = re.compile(
     r"(?:\*\*)?edit\s+command[\s*]*:[\s*]*```(?:bash|sh|shell)?\s*(.*?)\s*```",
     flags=re.DOTALL | re.IGNORECASE,
@@ -161,25 +157,15 @@ def parse_action(text: str) -> AgentAction:
                         done=malformed.group("done").lower() == "true",
                         message=message,
                     )
-                # Small local models occasionally start an explicit JSON/fenced
-                # action and stop before emitting the closing quote/braces. Only
-                # repair this shape when the response itself starts with the
-                # action envelope; never mine an arbitrary prose response for a
-                # command.
-                truncated = _TRUNCATED_COMMAND_ACTION.match(candidate)
-                if truncated and (had_fence or candidate.lstrip().startswith('{')):
-                    command = truncated.group("command").strip()
-                    if command.endswith("```"):
-                        command = command[:-3].rstrip()
-                    if command.endswith('"'):
-                        command = command[:-1]
-                    command = command.replace("\\\\", "\\").replace('\\"', '"').strip()
-                    if command:
-                        return AgentAction(command=command, message="parsed truncated JSON command")
+                # Never execute a truncated command: a missing suffix can turn
+                # a valid edit into a different operation. Preserve raw history
+                # and fail at the protocol boundary instead of inventing bytes.
                 raise ValueError("model response is not valid JSON") from None
     if not isinstance(payload, dict):
         raise ValueError("model action must be a JSON object")
-    done = bool(payload.get("done", False))
+    done = payload.get("done", False)
+    if not isinstance(done, bool):
+        raise ValueError("done must be a JSON boolean")
     command = payload.get("command", "")
     if not isinstance(command, str) or (not done and not command.strip()):
         raise ValueError("action needs a non-empty command unless done=true")

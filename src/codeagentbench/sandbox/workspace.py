@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from codeagentbench.models import TaskRecord
+from codeagentbench.sandbox.backends import selected_backend
 
 
 def workspace_digest(path: str | Path) -> str:
@@ -93,12 +94,13 @@ class WorkspaceManager:
     def create(self, task: TaskRecord, run_id: str) -> Workspace:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", run_id):
             raise ValueError("invalid run_id")
-        target = self.root / run_id / "workspace"
+        isolated_copy = selected_backend() == "nsjail"
+        target = self.root / run_id / ("sandbox/workspace" if isolated_copy else "workspace")
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             raise RuntimeError(f"workspace already exists for run {run_id!r}; use a new run id")
         snapshot = self._get_or_build_snapshot(task)
-        self._clone_snapshot(snapshot, target)
+        self._clone_snapshot(snapshot, target, dissociate=isolated_copy)
         return Workspace(run_id, target, task.base_commit)
 
     def _get_or_build_snapshot(self, task: TaskRecord) -> Path:
@@ -144,12 +146,12 @@ class WorkspaceManager:
             shutil.rmtree(staging_parent, ignore_errors=True)
 
     @staticmethod
-    def _clone_snapshot(snapshot: Path, target: Path) -> None:
+    def _clone_snapshot(snapshot: Path, target: Path, *, dissociate: bool = False) -> None:
         result = subprocess.run(
             # The snapshot is immutable and owned by this harness. Sharing
             # its object database keeps large SWE repositories cheap to clone;
             # each target still has an independent working tree and index.
-            ["git", "clone", "--quiet", "--shared", str(snapshot), str(target)],
+            ["git", "clone", "--quiet", "--shared", *(["--dissociate"] if dissociate else []), str(snapshot), str(target)],
             capture_output=True,
             text=True,
             check=False,

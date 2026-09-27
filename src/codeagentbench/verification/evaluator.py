@@ -10,6 +10,7 @@ from pathlib import Path
 
 from codeagentbench.models import Candidate, EvaluationResult, TaskRecord, ToolIntent, Verdict
 from codeagentbench.sandbox.executor import BashExecutor
+from codeagentbench.sandbox.backends import ISOLATED_BACKENDS, selected_backend
 from codeagentbench.sandbox.workspace import WorkspaceManager
 
 
@@ -69,12 +70,13 @@ class Evaluator:
         if remaining_seconds <= 0:
             return EvaluationResult(Verdict.BLOCKED, None, None, None, duration_seconds=time.monotonic() - started, reason="formal evaluation preparation exhausted time budget")
         try:
-            if os.getenv("CODEAGENTBENCH_EXECUTOR") == "bwrap":
-                receipt = BashExecutor(workspace.path, output_limit=200_000, backend="bwrap").execute(
+            backend = selected_backend()
+            if backend in ISOLATED_BACKENDS:
+                receipt = BashExecutor(workspace.path, output_limit=200_000, backend=backend).execute(
                     ToolIntent("formal-evaluation", spec.test_command, str(workspace.path), remaining_seconds)
                 )
-                if receipt.timed_out:
-                    return EvaluationResult(Verdict.BLOCKED, None, None, None, stdout=receipt.stdout, stderr=receipt.stderr, duration_seconds=time.monotonic() - started, reason="formal test timed out")
+                if receipt.status != "completed":
+                    return EvaluationResult(Verdict.BLOCKED, None, None, None, stdout=receipt.stdout, stderr=receipt.stderr, duration_seconds=time.monotonic() - started, reason=f"formal test resource limit: {receipt.status}")
                 exit_code, stdout, stderr = receipt.exit_code, receipt.stdout, receipt.stderr
             else:
                 result = subprocess.run(spec.test_command, cwd=workspace.path, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=remaining_seconds, check=False)
