@@ -107,3 +107,19 @@ def test_worker_honours_running_cancel(tmp_path, repository):
     thread.join(20)
     assert not thread.is_alive()
     assert repository.get(row["run_id"])["status"] == "cancelled"
+
+
+def test_worker_allows_explicit_nsjail_without_falling_back(tmp_path, repository, monkeypatch):
+    worker = Worker(repository, tmp_path / "artifacts", [MANIFEST], executor="nsjail")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "safe.directory")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "private-value")
+    monkeypatch.setenv("PRIVATE_API_KEY", "private-key")
+    env = worker._env()
+    assert env["CODEAGENTBENCH_EXECUTOR"] == "nsjail"
+    assert not any(k.startswith("GIT_CONFIG_") for k in env)
+    assert "PRIVATE_API_KEY" not in env
+    with pytest.raises(ValueError, match="trusted scripted"):
+        Worker(repository, tmp_path / "artifacts", [MANIFEST], executor="local")
+    with pytest.raises(ValueError, match="unknown"):
+        Worker(repository, tmp_path / "artifacts", [MANIFEST], executor="missing-backend")

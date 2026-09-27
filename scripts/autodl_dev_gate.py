@@ -101,6 +101,7 @@ def run(root: Path, model_path: Path, *, cache: Path | None = None, output_root:
     source_files = [Path("src/codeagentbench") / p for p in (
         "runtime.py", "models.py", "adapters/action.py", "adapters/text_edit.py", "adapters/file_tools.py",
         "adapters/source_read.py", "harness/source_evidence.py", "harness/context_history.py",
+        "harness/tool_observation.py",
         "sandbox/nsjail.py", "sandbox/executor.py", "sandbox/bounded_process.py",
         "verification/evaluator.py")]
     source_files.append(Path("scripts/autodl_dev_gate.py"))

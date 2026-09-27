@@ -74,7 +74,7 @@ def test_system_prompt_guides_source_navigation_without_task_answers() -> None:
     assert "Search for implementation symbols with line numbers" in prompt
     assert "Do not page a long file from line 1" in prompt
     assert "not by changing tests" in prompt
-    assert "preserve indentation" in prompt
+    assert "preserving indentation and newlines" in prompt
     assert "before substring copied exactly from a successful read" in prompt
     assert "moto/" not in prompt
 

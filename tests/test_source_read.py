@@ -57,7 +57,11 @@ def test_actual_read_is_bounded_whole_lines_versioned_and_idempotent_in_context(
                 {"role": "assistant", "content": json.dumps(read())},
                 {"role": "user", "content": "Tool result:\n" + json.dumps({k: vars(receipt)[k] for k in ("exit_code", "stdout", "stderr", "timed_out")})}]
     view = recent_history(messages)
-    assert json.loads(json.loads(view[-1]["content"].split("\n", 1)[1])["stdout"]) == data
+    projected = json.loads(view[-1]["content"].split("\n", 1)[1])
+    assert projected["stdout"] == data["text"]
+    assert projected["source_read"] == {k: v for k, v in data.items() if k != "text"}
+    assert projected["stdout_format"] == "decoded-source-text-v1"
+    assert json.loads(receipt.stdout) == data  # durable/raw receipt is unchanged
     assert recent_history(view) == view
 
 

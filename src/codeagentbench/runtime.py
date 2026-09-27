@@ -17,6 +17,7 @@ from codeagentbench.harness.budget import BudgetExceeded, BudgetLedger, BudgetSn
 from codeagentbench.harness.context import ContextManager
 from codeagentbench.harness.context_history import prepare_context
 from codeagentbench.harness.source_evidence import grounded_command, observe_source
+from codeagentbench.harness.tool_observation import tool_observation
 from codeagentbench.harness.recovery import ActionJournal
 from codeagentbench.models import AgentTaskView, RunConfig, RunState, TaskRecord, ToolIntent
 from codeagentbench.sandbox.executor import BashExecutor
@@ -102,8 +103,9 @@ class AgentRuntime:
                 if receipt_record is None or receipt_record["post_digest"] != workspace.digest:
                     raise RuntimeError("recovery receipt/workspace mismatch")
                 ledger.consume(seconds=receipt_record["duration_seconds"], tool_calls=1)
-                observation = {key: receipt_record[key] for key in ("exit_code", "stdout", "stderr", "timed_out")}
-                observe_source(state.source_observations, parse_action(state.pending_action_text), observation)
+                recovered_action = parse_action(state.pending_action_text)
+                observe_source(state.source_observations, recovered_action, receipt_record)
+                observation = tool_observation(recovered_action, receipt_record)
                 messages.append({"role": "user", "content": "Tool result:\n" + json.dumps(observation, ensure_ascii=False)})
                 if parse_action(state.pending_action_text).edit is not None and receipt_record["exit_code"] != 0:
                     state.failed_edits += 1
@@ -236,8 +238,8 @@ class AgentRuntime:
                         source=action_id,
                         priority=80 if receipt.exit_code else 30,
                     )
-                observation = {"exit_code": receipt.exit_code, "stdout": receipt.stdout, "stderr": receipt.stderr, "timed_out": receipt.timed_out}
-                observe_source(state.source_observations, action, observation)
+                observe_source(state.source_observations, action, asdict(receipt))
+                observation = tool_observation(action, asdict(receipt))
                 messages.append({"role": "user", "content": "Tool result:\n" + json.dumps(observation, ensure_ascii=False)})
                 if receipt.exit_code != 0:
                     if action.edit is not None:
@@ -378,7 +380,8 @@ class AgentRuntime:
             "Then read a small range around the actual matching line. Do not page a long file from line 1 to locate a function. "
             "A test path in the issue is not the implementation path. Use tests to understand expected behavior, "
             "then locate and change the implementation. Do not invent paths or request gold patches. "
-            "Use read for at most 80 lines. Its JSON text field contains exact source: decode newline escapes and preserve indentation. "
+            "Use read for at most 80 lines. Its stdout is exact decoded source; source_read holds path/version/line metadata. "
+            "Copy source from stdout, preserving indentation and newlines; do not copy JSON escape bytes as source. "
             "Use edit with a small, unique before substring copied exactly from a successful read; "
             "do not dedent, reformat or reconstruct before. File version, exact matching and syntax are checked before writing. "
             "After an edit or intervening file change, read again before another edit. "

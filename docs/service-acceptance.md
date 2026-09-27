@@ -25,8 +25,22 @@ python -m codeagentbench.service.worker --database "$CODEAGENTBENCH_DATABASE" \
 ```
 
 The script is a trusted deterministic demo. Real tasks require
-`--executor bwrap` and a configured `--backend local --model-path ...` (or DeepSeek
+`--executor bwrap` or `--executor nsjail` and a configured `--backend local --model-path ...` (or DeepSeek
 injected into the worker process environment). Never write credentials in Git.
+
+On this AutoDL container, use the explicit NsJail backend (no automatic fallback):
+
+```sh
+export CODEAGENTBENCH_ROOTFS='/root/autodl-tmp/nsjail-rootfs-source-20260927'
+python -m codeagentbench.service.worker --database /private/acceptance-queue.db \
+  --artifact-root /private/acceptance-artifacts --manifests data/manifests/demo.json \
+  --executor nsjail --script examples/demo_script.json --once
+```
+
+The scripted demo checks service plumbing only; it is not a real-model repair.
+Do not reuse a production queue for acceptance checks. GIT_CONFIG_* injection is
+removed as a complete group in children, together with credentials, rather than
+leaving an invalid GIT_CONFIG_COUNT after stripping its key fields.
 
 ## Contracts and limitations
 

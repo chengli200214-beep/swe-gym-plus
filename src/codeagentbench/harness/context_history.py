@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 
 from codeagentbench.adapters.action import parse_action
+from codeagentbench.harness.tool_observation import tool_observation
 
 POLICIES = {"native", "last-action-v2", "recent-history-v3"}
 INTERVENTIONS = ("Harness warning:", "Harness checkpoint:")
@@ -63,7 +64,7 @@ def _tool_pair(assistant: dict[str, str], user: dict[str, str], latest: bool) ->
     required = ("exit_code", "stdout", "stderr", "timed_out")
     if not isinstance(receipt, dict) or not set(required) <= receipt.keys():
         raise ValueError("incomplete real tool receipt")
-    bounded = {key: receipt[key] for key in required}
+    bounded = tool_observation(action, receipt)
     limit = 4000 if latest else 1000
     for key in ("stdout", "stderr"):
         text = str(bounded[key])

@@ -11,6 +11,7 @@ from codeagentbench.adapters.action import parse_action
 from codeagentbench.training.action_context import POLICY, encode_next_action
 from codeagentbench.harness.context_history import POLICIES, prepare_context
 from codeagentbench.harness.source_evidence import grounded_command, observe_source
+from codeagentbench.harness.tool_observation import tool_observation
 from scripts.accelerate_campaign import seed_ok
 
 
@@ -51,7 +52,7 @@ def examples(row, events, *, policy=POLICY):
             if "command" in receipt and receipt["command"] != event["intent"]["command"]:
                 raise ValueError("receipt command differs from journal intent")
             observe_source(observations, pending[0], receipt)
-            history.append({"role": "user", "content": "Tool result:\n" + json.dumps({k: receipt[k] for k in ("exit_code", "stdout", "stderr", "timed_out")}, ensure_ascii=False)})
+            history.append({"role": "user", "content": "Tool result:\n" + json.dumps(tool_observation(pending[0], receipt), ensure_ascii=False)})
             pending = None
     if pending is not None or not output or not json.loads(output[-1]["messages"][-1]["content"])["done"]:
         raise ValueError("source lacks verified termination")

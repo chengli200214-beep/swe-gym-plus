@@ -11,18 +11,27 @@ import sys
 import time
 
 from codeagentbench.service.repository import JobRepository
+from codeagentbench.sandbox.backends import BACKENDS, ISOLATED_BACKENDS
 from codeagentbench.tasks.manifest import load_manifest
 
 
 class Worker:
     def __init__(self, repository, artifact_root, manifests, *, backend="local", model_path=None, script=None, executor="bwrap"):
+        if executor not in BACKENDS:
+            raise ValueError("unknown worker executor")
+        if executor not in ISOLATED_BACKENDS and not script:
+            raise ValueError("local executor is only allowed for trusted scripted demos")
         self.repository = repository
         self.root = Path(artifact_root).resolve()
         self.manifests = {t.instance_id: str(Path(p).resolve()) for p in manifests for t in load_manifest(p).tasks}
         self.backend, self.model_path, self.script, self.executor = backend, model_path, script, executor
 
     def _env(self, *, model=False):
-        env = {k: v for k, v in os.environ.items() if not any(x in k.lower() for x in ("key", "token", "password", "secret", "credential"))}
+        # GIT_CONFIG_COUNT without its stripped *_KEY fields is invalid. Drop
+        # the entire injected configuration group, including potentially secret
+        # values; the worker uses the repository's actual git configuration.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG_")
+               and not any(x in k.lower() for x in ("key", "token", "password", "secret", "credential"))}
         env.update(PYTHONPATH=str(Path(__file__).resolve().parents[2]), CODEAGENTBENCH_EXECUTOR=self.executor)
         if model and self.backend == "deepseek":
             for name in ("DEEPSEEK_API_KEY", "DEEPSEEK_MIN_BALANCE_CNY", "DEEPSEEK_MAX_OUTPUT_TOKENS", "DEEPSEEK_MODEL"):
@@ -93,8 +102,8 @@ class Worker:
             elif code:
                 self.repository.finish(run_id, lease, "interrupted", summary)
             else:
-                # Demo uses the credential-free local executor; real tasks use
-                # the evaluator CLI which enforces bubblewrap.
+                # Demo uses the credential-free local executor; isolated runs
+                # use the evaluator CLI with the explicitly configured backend.
                 if self.executor == "local" and self.script:
                     from codeagentbench.models import Candidate
                     from codeagentbench.verification.evaluator import Evaluator
@@ -123,7 +132,7 @@ def main():
     parser.add_argument("--backend", choices=["local", "deepseek"], default="local")
     parser.add_argument("--model-path", type=Path)
     parser.add_argument("--script", type=Path)
-    parser.add_argument("--executor", choices=["local", "bwrap"], default="bwrap")
+    parser.add_argument("--executor", choices=sorted(BACKENDS), default="bwrap")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     if args.executor == "local" and not args.script:

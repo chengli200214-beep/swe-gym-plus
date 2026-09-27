@@ -14,7 +14,7 @@ def grounded_command(action: AgentAction, observations: list[dict]) -> str:
     if not matching:
         if any(o["path"] == action.edit.path for o in observations):
             raise ValueError("before text is not an exact substring of the successful read action; "
-                             "preserve every leading space and newline from its decoded text field, "
+                             "preserve every leading space and newline from its decoded source stdout, "
                              "and use a small unique substring; no edit ran")
         raise ValueError("edit requires a successful read action of this exact path and before text; "
                          "search with line numbers, then read actual implementation source before editing")
@@ -29,6 +29,16 @@ def observe_source(observations: list[dict], action: AgentAction, receipt: dict)
         observations[:] = [o for o in observations if o["path"] != action.edit.path]
     if action.read is None:
         return
+    result = source_read_result(action, receipt)
+    # Retain at most eight observations and discard older versions of this file.
+    observations[:] = [o for o in observations if o["path"] != result["path"]
+                       or o["sha256"] == result["sha256"]][-7:] + [result]
+
+
+def source_read_result(action: AgentAction, receipt: dict) -> dict:
+    """Validate the raw successful read packet before any presentation change."""
+    if action.read is None or receipt["exit_code"] != 0 or receipt["timed_out"]:
+        raise ValueError("not a successful source read")
     result = json.loads(receipt["stdout"])
     required = {"path", "sha256", "text", "start_line", "end_line", "next_line"}
     if (not isinstance(result, dict) or set(result) != required
@@ -40,6 +50,4 @@ def observe_source(observations: list[dict], action: AgentAction, receipt: dict)
             or not isinstance(result["sha256"], str) or len(result["sha256"]) != 64
             or any(c not in "0123456789abcdef" for c in result["sha256"])):
         raise ValueError("invalid actual source read receipt")
-    # Retain at most eight observations and discard older versions of this file.
-    observations[:] = [o for o in observations if o["path"] != result["path"]
-                       or o["sha256"] == result["sha256"]][-7:] + [result]
+    return result
