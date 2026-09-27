@@ -103,6 +103,9 @@ class AgentRuntime:
                 ledger.consume(seconds=receipt_record["duration_seconds"], tool_calls=1)
                 observation = {key: receipt_record[key] for key in ("exit_code", "stdout", "stderr", "timed_out")}
                 messages.append({"role": "user", "content": "Tool result:\n" + json.dumps(observation, ensure_ascii=False)})
+                if parse_action(state.pending_action_text).edit is not None and receipt_record["exit_code"] != 0:
+                    state.failed_edits += 1
+                    messages.append({"role": "user", "content": "Harness warning: the recovered edit failed. Use the actual error and do not repeat it unchanged; the two rejected edit limit still applies."})
                 records = journal.records()
                 intent_record = next(r for r in records if r.get("type") == "intent" and r["action_id"] == state.pending_action_id)
                 event_path = run_dir / "events.jsonl"
@@ -130,6 +133,9 @@ class AgentRuntime:
         clock_at = time.monotonic()
         try:
             for step in range(state.next_step, config.max_steps):
+                if state.failed_edits >= 2:
+                    state.status, state.failure_reason = "failed", "edit correction exhausted: two rejected edits"
+                    break
                 state.step = step
                 if cancellation_requested and cancellation_requested():
                     state.status, state.failure_reason = "cancelled", "cancellation requested"
@@ -141,6 +147,8 @@ class AgentRuntime:
                 if state.pending_action_text:
                     response = ModelResponse(state.pending_action_text)
                 else:
+                    policy = getattr(model, "prompt_policy", os.getenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", "native"))
+                    messages = prepare_context(messages, policy)
                     bound = getattr(model, "request_token_bound", lambda _: 1)(messages)
                     if not ledger.can_spend(tokens=bound) or ledger.snapshot.remaining_seconds <= 0:
                         raise BudgetExceeded("insufficient budget before model request")
@@ -148,7 +156,7 @@ class AgentRuntime:
                     self._checkpoint(state, ledger, workspace, messages)
                     model_started = time.monotonic()
                     response = model.complete(messages, temperature=config.temperature)
-                    self.artifact_store.append_event(run_id, {"type": "model", "content": response.text, "prompt_tokens": response.prompt_tokens, "completion_tokens": response.completion_tokens, "cost_usd": response.cost_usd, "estimated_cost_cny": response.estimated_cost_cny})
+                    self.artifact_store.append_event(run_id, {"type": "model", "content": response.text, "prompt_tokens": response.prompt_tokens, "completion_tokens": response.completion_tokens, "cost_usd": response.cost_usd, "estimated_cost_cny": response.estimated_cost_cny, "context_messages": [dict(m) for m in messages], "prompt_policy": policy})
                     ledger.consume(tokens=response.prompt_tokens + response.completion_tokens, cost_usd=response.cost_usd, seconds=time.monotonic() - model_started)
                     clock_at = time.monotonic()
                     messages.append({"role": "assistant", "content": response.text})
@@ -166,7 +174,16 @@ class AgentRuntime:
                         state.status = "completed"
                         state.failure_reason = f"post-test protocol warning: {exc}"
                     else:
-                        state.status, state.failure_reason = "failed", str(exc)
+                        messages.append({"role": "user", "content": "Protocol result:\n" + json.dumps({"error": str(exc)})})
+                        self.artifact_store.append_event(run_id, {"type": "protocol_rejection", "reason": str(exc)})
+                        state.pending_action_text = ""
+                        state.next_step = step + 1
+                        if state.protocol_corrections == 0:
+                            state.protocol_corrections = 1
+                            messages.append({"role": "user", "content": "Harness warning: no tool ran for the rejected response. Return one complete JSON action now. This is the only format correction retry; do not invent missing command bytes or test results."})
+                            self._checkpoint(state, ledger, workspace, messages)
+                            continue
+                        state.status, state.failure_reason = "failed", "protocol correction exhausted: " + str(exc)
                     break
                 if action.done:
                     state.pending_action_text = ""
@@ -180,7 +197,7 @@ class AgentRuntime:
                     raise BudgetExceeded("insufficient budget before tool execution")
                 pre_digest = workspace.digest
                 pre_diff = workspace.diff()
-                intent = ToolIntent(action_id, action.command, str(workspace.path), min(120.0, ledger.snapshot.remaining_seconds), True, action_id, pre_digest)
+                intent = ToolIntent(action_id, action.tool_command(), str(workspace.path), min(120.0, ledger.snapshot.remaining_seconds), True, action_id, pre_digest)
                 state.pending_action_id = action_id
                 journal.record_intent(intent)
                 self._checkpoint(state, ledger, workspace, messages)
@@ -219,13 +236,16 @@ class AgentRuntime:
                 observation = {"exit_code": receipt.exit_code, "stdout": receipt.stdout, "stderr": receipt.stderr, "timed_out": receipt.timed_out}
                 messages.append({"role": "user", "content": "Tool result:\n" + json.dumps(observation, ensure_ascii=False)})
                 if receipt.exit_code != 0:
+                    if action.edit is not None:
+                        state.failed_edits += 1
                     messages.append(
                         {
                             "role": "user",
                             "content": (
-                                "Harness warning: the previous shell command failed. Do not repeat the identical command. "
-                                "Inspect the exact file/line and use a short Python edit script or another safer command, "
-                                "then verify the diff before testing."
+                                "Harness warning: the previous tool failed. Do not repeat the identical action. "
+                                "Read the exact repository file/line; copy before from that source, not from a dependency traceback. "
+                                "Use the edit JSON tool for changes and verify the diff before testing. "
+                                "At most two rejected edit executions are allowed for the whole run."
                             ),
                         }
                     )
@@ -234,12 +254,15 @@ class AgentRuntime:
                 # Repeating the same command against the same checkout is still
                 # a no-progress loop. A real edit changes the workspace digest,
                 # so a necessary post-edit retest starts a new streak.
-                signature = hashlib.sha256(f"{action.command}\0{pre_digest}".encode("utf-8")).hexdigest()
+                signature = hashlib.sha256(f"{intent.command}\0{pre_digest}".encode("utf-8")).hexdigest()
                 repeated = repeated + 1 if signature == previous_signature else 0
                 previous_signature = signature
                 state.previous_signature, state.repeated = previous_signature, repeated
                 state.tested_diff = tested_diff
                 self.artifact_store.append_event(run_id, {"type": "tool", "intent": asdict(intent), "receipt": asdict(receipt)})
+                if state.failed_edits >= 2:
+                    state.status, state.failure_reason = "failed", "edit correction exhausted: two rejected edits"
+                    break
                 if repeated == 1:
                     messages.append(
                         {
@@ -345,7 +368,12 @@ class AgentRuntime:
             "absolute /mnt/workspace paths in commands; operate on the checked-out task workspace directly. "
             "The harness has already prepared this workspace from the requested base commit; do not run "
             "git checkout, git fetch, git reset, or otherwise switch revisions before inspecting the files. "
-            'Return exactly JSON: {"command":"...", "done":false, "message":"..."}. '
+            'Return exactly ONE JSON action. To inspect or test: {"command":"...","done":false,"message":"..."}. '
+            'To edit: {"edit":{"path":"relative/file.py","before":"exact current source","after":"replacement source"},"done":false,"message":"..."}. '
+            'To finish: {"done":true,"message":"..."}. '
+            "Prefer the edit tool over sed or inline Python: copy before exactly, including indentation, "
+            "from a file you actually read; it must match once. The tool validates Python syntax before writing. "
+            "Only repository files are editable; a dependency traceback explains the error but is not source to patch. "
             "Set done=true only after a post-edit visible test or direct smoke check. "
             "The harness marks patches without a recognized passing post-edit test as unverified; "
             "a direct smoke check may not receive that flag. Only independent evaluation determines success. "

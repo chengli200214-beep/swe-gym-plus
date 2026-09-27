@@ -16,6 +16,9 @@ def compact_context(messages: list[dict[str, str]], *, output_chars: int = 4000)
     if output_chars < 1 or len(messages) < 2 or messages[0]["role"] != "system" or messages[1]["role"] != "user":
         raise ValueError("expected system + initial user task")
     result = [dict(messages[0]), dict(messages[1])]
+    if any(m["content"].startswith("Protocol result:\n") for m in messages[2:]):
+        from codeagentbench.harness.context_history import recent_history
+        return recent_history(messages, turns=1)
     tool_indices = [i for i, m in enumerate(messages[2:], 2) if m["role"] == "user" and m["content"].startswith("Tool result:\n")]
     if not tool_indices:
         return result
@@ -25,7 +28,7 @@ def compact_context(messages: list[dict[str, str]], *, output_chars: int = 4000)
         raise ValueError("real tool receipt has lost its previous action")
     from codeagentbench.adapters.action import parse_action
     action = parse_action(messages[action_indices[-1]]["content"])
-    if action.done or not action.command:
+    if not action.executable:
         raise ValueError("tool receipt must follow an executable action")
     observation = json.loads(messages[index]["content"].split("\n", 1)[1])
     required = {"exit_code", "stdout", "stderr", "timed_out"}
@@ -38,7 +41,7 @@ def compact_context(messages: list[dict[str, str]], *, output_chars: int = 4000)
         if len(text) > output_chars or observation.get(key + "_truncated") is True:
             bounded[key + "_truncated"] = True
     result += [
-        {"role": "assistant", "content": json.dumps({"command": action.command, "done": False, "message": action.message}, ensure_ascii=False, separators=(",", ":"))},
+        {"role": "assistant", "content": json.dumps(action.to_dict(), ensure_ascii=False, separators=(",", ":"))},
         {"role": "user", "content": "Tool result:\n" + json.dumps(bounded, ensure_ascii=False)},
     ]
     # Keep factual failure feedback deterministically in both data and rollout.

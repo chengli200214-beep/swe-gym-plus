@@ -24,7 +24,7 @@ def recent_history(messages: list[dict[str, str]], *, turns: int = 4) -> list[di
         raise ValueError("expected system + initial user task and a positive turn limit")
     result = [dict(m) for m in messages[:2]]
     receipts = [i for i, m in enumerate(messages[2:], 2)
-                if m["role"] == "user" and m["content"].startswith("Tool result:\n")]
+                if m["role"] == "user" and m["content"].startswith(("Tool result:\n", "Protocol result:\n"))]
     previous_receipt = 1
     pairs = []
     for index in receipts:
@@ -34,31 +34,16 @@ def recent_history(messages: list[dict[str, str]], *, turns: int = 4) -> list[di
         pairs.append((actions[0], index))
         previous_receipt = index
     if not pairs:
-        return result
+        return result + [dict(m) for m in messages[2:]]
     selected = pairs[-turns:]
     for position, (action_index, receipt_index) in enumerate(selected):
-        action = parse_action(messages[action_index]["content"])
-        if action.done or not action.command:
-            raise ValueError("real receipt must follow an executable action")
-        receipt = json.loads(messages[receipt_index]["content"].split("\n", 1)[1])
-        required = ("exit_code", "stdout", "stderr", "timed_out")
-        if not isinstance(receipt, dict) or not set(required) <= receipt.keys():
-            raise ValueError("incomplete real tool receipt")
-        bounded = {key: receipt[key] for key in required}
-        limit = 4000 if position == len(selected) - 1 else 1000
-        for key in ("stdout", "stderr"):
-            text = str(bounded[key])
-            bounded[key] = text[:limit]
-            if len(text) > limit or receipt.get(key + "_truncated") is True:
-                bounded[key + "_truncated"] = True
-        result.extend([
-            {"role": "assistant", "content": json.dumps(
-                {"command": action.command, "done": False, "message": action.message},
-                ensure_ascii=False, separators=(",", ":"))},
-            {"role": "user", "content": "Tool result:\n" + json.dumps(bounded, ensure_ascii=False)},
-        ])
-        # An intervention applies to the next action. Once that action has a
-        # receipt, retain its evidence but expire the old imperative feedback.
+        if messages[receipt_index]["content"].startswith("Protocol result:\n"):
+            rejection = json.loads(messages[receipt_index]["content"].split("\n", 1)[1])
+            if not isinstance(rejection, dict) or not isinstance(rejection.get("error"), str):
+                raise ValueError("invalid protocol rejection receipt")
+            result.extend([dict(messages[action_index]), dict(messages[receipt_index])])
+        else:
+            result.extend(_tool_pair(messages[action_index], messages[receipt_index], position == len(selected) - 1))
         if position != len(selected) - 1:
             continue
         seen = set()
@@ -68,6 +53,28 @@ def recent_history(messages: list[dict[str, str]], *, turns: int = 4) -> list[di
                 result.append(dict(message))
                 seen.add(content)
     return result
+
+
+def _tool_pair(assistant: dict[str, str], user: dict[str, str], latest: bool) -> list[dict[str, str]]:
+    action = parse_action(assistant["content"])
+    if not action.executable:
+        raise ValueError("real receipt must follow an executable action")
+    receipt = json.loads(user["content"].split("\n", 1)[1])
+    required = ("exit_code", "stdout", "stderr", "timed_out")
+    if not isinstance(receipt, dict) or not set(required) <= receipt.keys():
+        raise ValueError("incomplete real tool receipt")
+    bounded = {key: receipt[key] for key in required}
+    limit = 4000 if latest else 1000
+    for key in ("stdout", "stderr"):
+        text = str(bounded[key])
+        bounded[key] = text[:limit]
+        if len(text) > limit or receipt.get(key + "_truncated") is True:
+            bounded[key + "_truncated"] = True
+    return [
+        {"role": "assistant", "content": json.dumps(
+            action.to_dict(), ensure_ascii=False, separators=(",", ":"))},
+        {"role": "user", "content": "Tool result:\n" + json.dumps(bounded, ensure_ascii=False)},
+    ]
 
 
 def prepare_context(messages: list[dict[str, str]], policy: str) -> list[dict[str, str]]:

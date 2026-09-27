@@ -262,6 +262,8 @@ class RunState:
     tested_diff: str | None = None
     previous_signature: str = ""
     repeated: int = 0
+    protocol_corrections: int = 0
+    failed_edits: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

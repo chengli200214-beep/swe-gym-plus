@@ -6,6 +6,8 @@ import json
 import re
 from dataclasses import dataclass
 
+from codeagentbench.adapters.text_edit import TextEdit, edit_command, validate_edit
+
 
 @dataclass(frozen=True)
 class AgentAction:
@@ -14,6 +16,19 @@ class AgentAction:
     command: str = ""
     done: bool = False
     message: str = ""
+    edit: TextEdit | None = None
+
+    @property
+    def executable(self) -> bool:
+        return not self.done and bool(self.command or self.edit)
+
+    def to_dict(self) -> dict:
+        if self.edit is not None:
+            return {"edit": self.edit.to_dict(), "done": False, "message": self.message}
+        return {"command": self.command, "done": self.done, "message": self.message}
+
+    def tool_command(self) -> str:
+        return edit_command(self.edit) if self.edit is not None else self.command
 
 
 _DSML_MARKER = "\uFF5C\uFF5CDSML\uFF5C\uFF5C"
@@ -133,7 +148,7 @@ def parse_action(text: str) -> AgentAction:
                     parsed, _ = decoder.raw_decode(candidate[index:])
                 except json.JSONDecodeError:
                     continue
-                if isinstance(parsed, dict) and ("command" in parsed or "done" in parsed):
+                if isinstance(parsed, dict) and ("command" in parsed or "done" in parsed or "edit" in parsed):
                     action_candidates.append(parsed)
             if action_candidates:
                 # Some models emit an entire imagined tool transcript in one
@@ -166,6 +181,10 @@ def parse_action(text: str) -> AgentAction:
     done = payload.get("done", False)
     if not isinstance(done, bool):
         raise ValueError("done must be a JSON boolean")
+    if "edit" in payload:
+        if done or "command" in payload or set(payload) - {"edit", "done", "message"}:
+            raise ValueError("edit cannot include command, done=true or unknown fields")
+        return AgentAction(edit=validate_edit(payload["edit"]), message=str(payload.get("message", "")))
     command = payload.get("command", "")
     if not isinstance(command, str) or (not done and not command.strip()):
         raise ValueError("action needs a non-empty command unless done=true")
