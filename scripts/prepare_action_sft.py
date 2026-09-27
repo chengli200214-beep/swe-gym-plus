@@ -12,7 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from codeagentbench.runtime import AgentRuntime, parse_action
+from codeagentbench.runtime import AgentRuntime
+from codeagentbench.adapters.action import parse_action
 
 
 def action_examples(row: dict[str, Any], *, system_prompt: str, context_chars: int = 800, include_done: bool = False, history: bool = False) -> list[dict[str, Any]]:

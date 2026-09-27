@@ -23,7 +23,18 @@ frozen SWE-Gym revision, a quality report for every task, and complete artifacts
 - P3/GRPO: formal reward interface is present, but no GRPO benchmark claim is
   made. GRPO remains a separate follow-up experiment.
 
-The latest honest results are recorded in
+The latest experiment results (2026-09-27) are in
+[`docs/SERVER_HANDOFF_20260927.md`](docs/SERVER_HANDOFF_20260927.md),
+with a machine-readable summary in
+[`experiments/progress-20260927/summary.json`](experiments/progress-20260927/summary.json).
+Two 3B BF16 LoRA rounds used 20 successful training tasks / 250 action examples;
+each admitted evaluation set scored Base 1/12 and SFT 0/12. A subsequent
+three-task context intervention probe produced no patches. These are diagnostic
+results, not evidence of a repair-rate improvement. Private adapters and raw
+traces are not stored in this public repository; the handoff describes their
+separate migration package and pending action-protocol fix.
+
+Earlier results are recorded in
 [`experiments/sft-v0/evaluation/comparison.md`](experiments/sft-v0/evaluation/comparison.md),
 and the remote reproduction steps are in
 [`docs/experiment-reproduction.md`](docs/experiment-reproduction.md).

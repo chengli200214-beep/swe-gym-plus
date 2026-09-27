@@ -10,6 +10,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from codeagentbench.harness.context_history import POLICIES, prepare_context
+
 
 @dataclass(frozen=True)
 class ModelResponse:
@@ -59,6 +61,9 @@ class LocalHFModel:
         self.model_path = model_path
         self.model = model_path
         self.max_new_tokens = max_new_tokens
+        self.prompt_policy = os.getenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", "native")
+        if self.prompt_policy not in POLICIES:
+            raise ValueError("unknown local prompt policy")
         self._torch = torch
         load_kwargs = {
             "device_map": "auto",
@@ -93,10 +98,12 @@ class LocalHFModel:
         self._model.eval()
 
     def request_token_bound(self, messages: list[dict[str, str]]) -> int:
+        messages = self._prepare_messages(messages)
         prompt = self._tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         return len(self._tokenizer(prompt, add_special_tokens=False)["input_ids"]) + self.max_new_tokens
 
     def complete(self, messages: list[dict[str, str]], *, temperature: float = 0.0) -> ModelResponse:
+        messages = self._prepare_messages(messages)
         inputs = self._tokenizer.apply_chat_template(
             messages,
             tokenize=True,
@@ -125,6 +132,9 @@ class LocalHFModel:
             prompt_tokens=int(inputs["input_ids"].shape[-1]),
             completion_tokens=int(generated.shape[-1]),
         )
+
+    def _prepare_messages(self, messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        return prepare_context(messages, self.prompt_policy)
 
 
 class DeepSeekModel:

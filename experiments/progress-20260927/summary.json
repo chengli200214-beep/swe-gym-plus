@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-09-27",
+  "scope": "Moto-only diagnostic experiments; previously inspected evaluation tasks, not a fresh sealed benchmark",
+  "cloud_source_commit": "a3aa038f01ec77a6d4de0961b4fa54caf71d5ba9",
+  "rounds": {
+    "formal-accelerated-20260926": {
+      "verification_status": "verified_completed",
+      "source_report_sha256": "02ad2c43198dbd95dc0dbee1d4867707cdd0c5df4655349374e11bb61762e110",
+      "source_verification_sha256": "98c9225c44123f58f6dde9de613430ee321ac0c00c4197d72e2f3da0cc338700",
+      "distinct_training_tasks": 20,
+      "train_records": 250,
+      "optimizer_steps": 32,
+      "epochs": 1,
+      "eval": {"frozen_tasks": 20, "admitted": 12, "not_admitted": 8, "base_passed": 1, "sft_passed": 0},
+      "dev": {"frozen_tasks": 4, "admitted": 0, "not_admitted": 4}
+    },
+    "aligned-round2-20260927": {
+      "verification_status": "verified_completed",
+      "source_report_sha256": "ea037488146e08cbaeb8f94c9c0a8f22825b6d2aa4f54ab9330c91561b1a630e",
+      "source_verification_sha256": "9b9f3663266248a898dba6a25b11a28e478fb843c597fa2d2772d971750433c4",
+      "adapter_sha256": "6b384c15fc7cf8d72e3ed7e338f972fb2604343c1e6aef9e28209dabfea85282",
+      "distinct_training_tasks": 20,
+      "train_records": 250,
+      "optimizer_steps": 32,
+      "epochs": 1,
+      "eval": {"frozen_tasks": 20, "admitted": 12, "not_admitted": 8, "base_passed": 1, "sft_passed": 0},
+      "dev": {"frozen_tasks": 4, "admitted": 0, "not_admitted": 4},
+      "weight_tensors_finite": 504,
+      "nonzero_lora_b_tensors": 252
+    },
+    "context-history-probe-20260927": {
+      "verification_status": "verified_completed",
+      "source_report_sha256": "76c4f9353c96cb4cb301cccfb38feec30f9459b89e5229ae2b0bb44cc6f3a025",
+      "source_verification_sha256": "9577896a5dd50a5ff463bdc5daba89cea0db3901277ac070b74da36bf211dbd8",
+      "groups": {
+        "last-action-v2": {"tasks": 3, "repeat_exits": 3, "budget_exits": 0, "patches": 0, "passed": 0, "warnings_delivered": 0, "changed_after_warning": 0, "model_calls": 18, "output_limit_hits": 6, "truncated_action_repairs": 10, "tool_nonzero_exits": 13},
+        "recent-history-v3": {"tasks": 3, "repeat_exits": 2, "budget_exits": 1, "patches": 0, "passed": 0, "warnings_delivered": 5, "changed_after_warning": 2, "model_calls": 20, "output_limit_hits": 16, "truncated_action_repairs": 16, "tool_nonzero_exits": 18}
+      },
+      "source_identity_matches": true,
+      "prior_assets_unchanged": true,
+      "elapsed_seconds": 1430.8291857900003,
+      "regression_tests_passed": 88
+    }
+  },
+  "pending_work": [
+    "Reject incomplete model actions and give bounded correction feedback (not implemented)",
+    "Validate a complete model-generated edit on one task (not run)",
+    "Transfer private adapters and experiment data separately from public GitHub"
+  ],
+  "private_assets_in_public_repository": false,
+  "independent_external_backup_completed": false
+}

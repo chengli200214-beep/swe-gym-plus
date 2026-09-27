@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from typing import Any
 
 from codeagentbench.models import EvalSpec, TaskRecord
@@ -20,7 +21,7 @@ def normalize_swe_gym_row(row: dict[str, Any], *, split: str = "unspecified") ->
         spec = EvalSpec.from_dict(data)
         test_names = list(dict.fromkeys((*spec.fail_to_pass, *spec.pass_to_pass)))
         if test_names:
-            data["test_command"] = "python -m pytest -q " + " ".join(test_names)
+            data["test_command"] = shlex.join(["python", "-m", "pytest", "-q", *test_names])
     data.setdefault("metadata", {
         key: data[key]
         for key in ("hints_text", "created_at", "version")

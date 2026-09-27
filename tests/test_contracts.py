@@ -13,7 +13,8 @@ from codeagentbench.harness.recovery import ActionJournal
 from codeagentbench.models import Candidate, EvalSpec, EvaluationResult, RunConfig, TaskRecord, ToolIntent, Verdict
 from codeagentbench.rollout.selector import RuleCandidateSelector
 from codeagentbench.rollout.coordinator import RolloutCoordinator
-from codeagentbench.runtime import AgentRuntime, parse_action
+from codeagentbench.runtime import AgentRuntime
+from codeagentbench.adapters.action import parse_action
 from codeagentbench.sandbox.workspace import WorkspaceManager
 from codeagentbench.storage.artifacts import ArtifactStore
 from codeagentbench.tasks.manifest import load_manifest

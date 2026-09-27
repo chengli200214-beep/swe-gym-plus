@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from codeagentbench.runtime import parse_action
+from codeagentbench.adapters.action import parse_action
 from codeagentbench.training.sft import trajectory_to_sft
 
 
