@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--temperature", type=float, default=0.2)
     run.add_argument("--run-id")
     run.add_argument("--resume", action="store_true", help="resume an acknowledged checkpoint with its original budget")
+    run.add_argument("--no-repository-inventory", action="store_true", help="disable initial filename observation for a controlled comparison")
     run.add_argument("--max-steps", type=int, default=8)
     run.add_argument("--max-tool-calls", type=int, default=16)
     run.add_argument("--max-tokens", type=int, default=16000)
@@ -178,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         max_tokens=args.max_tokens,
         max_seconds=args.max_seconds,
         max_cost_usd=args.max_cost_usd,
+        repository_inventory=not args.script and not args.no_repository_inventory,
     )
     if args.resume:
         metadata = json.loads((store.run_dir(run_id) / "run.json").read_text(encoding="utf-8"))

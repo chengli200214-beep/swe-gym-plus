@@ -12,6 +12,7 @@ from codeagentbench.training.action_context import POLICY, encode_next_action
 from codeagentbench.harness.context_history import POLICIES, prepare_context
 from codeagentbench.harness.source_evidence import grounded_command, observe_source
 from codeagentbench.harness.tool_observation import tool_observation
+from codeagentbench.adapters.repository_inventory import inventory_command, inventory_packet
 from scripts.accelerate_campaign import seed_ok
 
 
@@ -21,6 +22,18 @@ def examples(row, events, *, policy=POLICY):
     prompts = [e["content"] for e in events if e.get("type") == "prompt"]
     if prompts != [row["messages"][0]["content"]]:
         raise ValueError("source prompt and authoritative events disagree")
+    inventory = json.loads(prompts[0]).get("repository_inventory")
+    inventories = [e for e in events if e.get("type") == "harness_tool" and e.get("name") == "repository_inventory"]
+    if inventory is not None:
+        if len(inventories) != 1:
+            raise ValueError("initial inventory lacks one real harness receipt")
+        observed = inventories[0]
+        if (observed["intent"]["command"] != inventory_command()
+                or observed["receipt"]["command"] != observed["intent"]["command"]
+                or inventory_packet(observed["receipt"]) != inventory):
+            raise ValueError("initial inventory disagrees with the real observation")
+    elif inventories:
+        raise ValueError("real inventory is absent from the initial model context")
     history = [{"role": "system", "content": AgentRuntime._system_prompt()}, {"role": "user", "content": prompts[0]}]
     output, pending, observations = [], None, []
     model_texts = [e["content"] for e in events if e.get("type") == "model"]

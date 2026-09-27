@@ -53,7 +53,8 @@ def collect_provenance(events_path: str | Path, events: list[dict[str, Any]]) ->
         if model_events and all(event.get("estimated_cost_cny") is not None for event in model_events)
         else None
     )
-    tool_calls = sum(1 for event in events if event.get("type") == "tool")
+    tool_calls = sum(1 for event in events if event.get("type") in {"tool", "harness_tool"})
+    framework_tool_calls = sum(1 for event in events if event.get("type") == "harness_tool")
 
     budget = summary.get("budget") or checkpoint.get("budget") or {}
     duration = None
@@ -76,6 +77,7 @@ def collect_provenance(events_path: str | Path, events: list[dict[str, Any]]) ->
         "cost_usd": cost_usd,
         "estimated_cost_cny": estimated_cost_cny,
         "tool_calls": tool_calls,
+        "framework_tool_calls": framework_tool_calls,
     }
 
 

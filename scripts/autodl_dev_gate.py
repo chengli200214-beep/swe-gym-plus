@@ -96,12 +96,13 @@ def run(root: Path, model_path: Path, *, cache: Path | None = None, output_root:
     os.environ["CODEAGENTBENCH_LOCAL_PROMPT_POLICY"] = "recent-history-v3"
     model = LocalHFModel(model_path, max_new_tokens=2048)
     config = RunConfig(model=str(model_path), temperature=0, max_steps=16,
-        max_tool_calls=16, max_tokens=180000, max_seconds=600, max_cost_usd=0)
+        max_tool_calls=16, max_tokens=180000, max_seconds=600, max_cost_usd=0, repository_inventory=True)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
     source_files = [Path("src/codeagentbench") / p for p in (
         "runtime.py", "models.py", "adapters/action.py", "adapters/text_edit.py", "adapters/file_tools.py",
         "adapters/source_read.py", "harness/source_evidence.py", "harness/context_history.py",
         "harness/tool_observation.py",
+        "adapters/repository_inventory.py", "harness/repository_inventory.py",
         "sandbox/nsjail.py", "sandbox/executor.py", "sandbox/bounded_process.py",
         "verification/evaluator.py")]
     source_files.append(Path("scripts/autodl_dev_gate.py"))

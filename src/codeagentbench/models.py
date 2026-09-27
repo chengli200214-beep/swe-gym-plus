@@ -151,6 +151,7 @@ class RunConfig:
     harness: str = "reliable"
     image: str = "local"
     seed: int = 0
+    repository_inventory: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -266,6 +267,7 @@ class RunState:
     protocol_corrections: int = 0
     failed_edits: int = 0
     source_observations: list[dict[str, Any]] = field(default_factory=list)
+    inventory_consumed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
