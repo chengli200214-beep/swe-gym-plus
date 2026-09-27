@@ -70,7 +70,8 @@ class AgentRuntime:
         run_id = run_id or f"{task.instance_id}-{int(time.time())}"
         run_dir = self.artifact_store.run_dir(run_id) if resume else self.artifact_store.start_run(run_id, task.instance_id, config)
         journal = ActionJournal(run_dir / "actions.jsonl")
-        executor = BashExecutor(workspace.path, journal, backend=selected_backend())
+        executor = BashExecutor(workspace.path, journal, backend=selected_backend(),
+                                cancellation_requested=cancellation_requested)
         ledger = ledger or BudgetLedger(config.max_tokens, config.max_seconds, config.max_cost_usd, config.max_tool_calls)
         state = RunState(run_id, task.instance_id, status="running", remaining_tokens=config.max_tokens, remaining_seconds=config.max_seconds)
         context = ContextManager(task.issue)
@@ -266,6 +267,9 @@ class AgentRuntime:
                 state.previous_signature, state.repeated = previous_signature, repeated
                 state.tested_diff = tested_diff
                 self.artifact_store.append_event(run_id, {"type": "tool", "intent": asdict(intent), "receipt": asdict(receipt)})
+                if receipt.status == "cancelled":
+                    state.status, state.failure_reason = "cancelled", "cancellation requested during tool execution"
+                    break
                 if state.failed_edits >= 2:
                     state.status, state.failure_reason = "failed", "edit correction exhausted: two rejected edits"
                     break

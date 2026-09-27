@@ -8,6 +8,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,8 @@ def writable_usage(paths: tuple[Path, ...], *, bytes_limit: int, files_limit: in
 
 def run_bounded(command: list[str], *, timeout: float, output_limit: int,
                 writable_paths: tuple[Path, ...], bytes_limit: int = 256 * 1024 * 1024,
-                files_limit: int = 20000) -> ProcessResult:
+                files_limit: int = 20000,
+                cancellation_requested: Callable[[], bool] | None = None) -> ProcessResult:
     """Kill the entire group on any exit, deadline, quota failure or exception.
 
     NsJail must use skip_setsid and the guest policy must deny setsid/setpgid.
@@ -64,6 +66,8 @@ def run_bounded(command: list[str], *, timeout: float, output_limit: int,
     """
     if os.name != "posix" or timeout <= 0 or output_limit <= 0:
         raise ValueError("bounded process requires Linux and positive limits")
+    if cancellation_requested and cancellation_requested():
+        return ProcessResult(None, "", "Harness cancellation requested", "cancelled")
     writable_usage(writable_paths, bytes_limit=bytes_limit, files_limit=files_limit)
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     captured = 0
@@ -81,6 +85,9 @@ def run_bounded(command: list[str], *, timeout: float, output_limit: int,
                 selector.register(pipe, selectors.EVENT_READ, name)
             while selector.get_map():
                 now = time.monotonic()
+                if cancellation_requested and cancellation_requested():
+                    status = "cancelled"
+                    break
                 if now >= deadline:
                     status = "timeout"
                     break
@@ -111,11 +118,20 @@ def run_bounded(command: list[str], *, timeout: float, output_limit: int,
                     except ProcessLookupError:
                         pass
         if status == "completed":
-            remaining = deadline - time.monotonic()
-            try:
-                process.wait(timeout=max(0.01, remaining))
-            except subprocess.TimeoutExpired:
-                status = "timeout"
+            # Closed pipes do not mean the process is finished. Continue
+            # observing cancellation instead of blocking until its deadline.
+            while process.poll() is None:
+                if cancellation_requested and cancellation_requested():
+                    status = "cancelled"
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    status = "timeout"
+                    break
+                try:
+                    process.wait(timeout=min(0.1, remaining))
+                except subprocess.TimeoutExpired:
+                    pass
     finally:
         try:
             os.killpg(process.pid, signal.SIGKILL)
@@ -125,7 +141,8 @@ def run_bounded(command: list[str], *, timeout: float, output_limit: int,
         for name in buffers:
             getattr(process, name).close()
     if status != "completed":
-        buffers["stderr"].extend(("\nHarness resource limit: " + status).encode())
+        reason = "Harness cancellation requested" if status == "cancelled" else "Harness resource limit: " + status
+        buffers["stderr"].extend(("\n" + reason).encode())
     return ProcessResult(process.returncode if status == "completed" else None,
                          buffers["stdout"].decode("utf-8", errors="replace"),
                          buffers["stderr"].decode("utf-8", errors="replace"), status)

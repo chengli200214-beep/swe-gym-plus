@@ -6,11 +6,11 @@ import argparse
 import json
 import os
 import sys
-import signal
 import time
 from pathlib import Path
 
 from codeagentbench.adapters.model import DeepSeekModel, LocalHFModel, ScriptedModel
+from codeagentbench.harness.cancellation import termination_requested
 from codeagentbench.models import Candidate, RunConfig
 from codeagentbench.sandbox.workspace import Workspace, WorkspaceManager
 from codeagentbench.sandbox.backends import ISOLATED_BACKENDS, selected_backend
@@ -121,7 +121,9 @@ def main(argv: list[str] | None = None) -> int:
         from codeagentbench.verification.evaluator import Evaluator
 
         candidate = Candidate("candidate-0", args.run_id, str(summary.get("diff") or ""), str(summary.get("status") or "unknown"))
-        evaluation = Evaluator(args.repo_root / "evaluations").evaluate(task, candidate, timeout_seconds=args.timeout)
+        with termination_requested() as cancelled:
+            evaluation = Evaluator(args.repo_root / "evaluations").evaluate(task, candidate,
+                timeout_seconds=args.timeout, cancellation_requested=cancelled)
         ArtifactStore(args.repo_root).append_event(args.run_id, {"type": "evaluation", **evaluation.to_dict()})
         print(json.dumps({"run_id": args.run_id, "evaluation": evaluation.to_dict()}, ensure_ascii=False))
         return 0 if evaluation.passed else 1
@@ -182,22 +184,16 @@ def main(argv: list[str] | None = None) -> int:
         if metadata["config"]["model"] != config.model:
             parser.error("resume model differs from original run")
         config = RunConfig(**metadata["config"])
-    cancelled = False
-    def request_cancel(signum, frame):
-        nonlocal cancelled
-        cancelled = True
-    previous_handler = signal.signal(signal.SIGTERM, request_cancel)
-    try:
-        result = AgentRuntime(store).run(task, workspace, model, config, run_id=workspace.run_id, resume=args.resume, cancellation_requested=lambda: cancelled)
-    finally:
-        signal.signal(signal.SIGTERM, previous_handler)
-    if args.skip_evaluation:
-        print(json.dumps({"run_id": result.run_id, "status": result.status, "diff_present": bool(result.diff), "evaluation": None}, ensure_ascii=False))
-        return 0
-    candidate = Candidate("candidate-0", result.run_id, result.diff, result.status, visible_test_passed=result.visible_test_passed)
-    from codeagentbench.verification.evaluator import Evaluator
+    with termination_requested() as cancelled:
+        result = AgentRuntime(store).run(task, workspace, model, config, run_id=workspace.run_id,
+            resume=args.resume, cancellation_requested=cancelled)
+        if args.skip_evaluation or result.status == "cancelled":
+            print(json.dumps({"run_id": result.run_id, "status": result.status, "diff_present": bool(result.diff), "evaluation": None}, ensure_ascii=False))
+            return 130 if result.status == "cancelled" else 0
+        candidate = Candidate("candidate-0", result.run_id, result.diff, result.status, visible_test_passed=result.visible_test_passed)
+        from codeagentbench.verification.evaluator import Evaluator
 
-    evaluation = Evaluator(args.repo_root / "evaluations").evaluate(task, candidate)
+        evaluation = Evaluator(args.repo_root / "evaluations").evaluate(task, candidate, cancellation_requested=cancelled)
     store.append_event(result.run_id, {"type": "evaluation", **evaluation.to_dict()})
     print(json.dumps({"run_id": result.run_id, "status": result.status, "diff": result.diff, "evaluation": evaluation.to_dict()}, ensure_ascii=False))
     # The independent evaluator is the acceptance authority. A run may exhaust

@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable
 
 from codeagentbench.harness.recovery import ActionJournal
 from codeagentbench.models import ToolIntent, ToolReceipt
@@ -26,13 +27,14 @@ class BashExecutor:
     environment, and disables network access. Use bwrap for untrusted commands.
     """
 
-    def __init__(self, workspace: str | Path, journal: ActionJournal | None = None, output_limit: int = 20_000, *, backend: str = "local", approved_cache_root: str | Path | None = None) -> None:
+    def __init__(self, workspace: str | Path, journal: ActionJournal | None = None, output_limit: int = 20_000, *, backend: str = "local", approved_cache_root: str | Path | None = None, cancellation_requested: Callable[[], bool] | None = None) -> None:
         if backend not in BACKENDS:
             raise ValueError(f"unknown executor backend: {backend}")
         self.workspace = Path(workspace).resolve()
         self.journal = journal
         self.output_limit = output_limit
         self.backend = backend
+        self.cancellation_requested = cancellation_requested
         self.approved_cache_root = Path(approved_cache_root).resolve() if approved_cache_root is not None else None
         self.bash = shutil.which("bash") or shutil.which("wsl.exe")
         self.bwrap = shutil.which("bwrap") if backend == "bwrap" else None
@@ -50,7 +52,8 @@ class BashExecutor:
             # Import only on Linux; all three task execution paths use this
             # same supervisor and no failure ever falls back to a host shell.
             from codeagentbench.sandbox.nsjail import NsjailSandbox
-            result = NsjailSandbox(self.workspace).execute(intent.command, cwd, intent.timeout_seconds, self.output_limit)
+            result = NsjailSandbox(self.workspace).execute(intent.command, cwd, intent.timeout_seconds, self.output_limit,
+                cancellation_requested=self.cancellation_requested)
             receipt = ToolReceipt(intent.action_id, intent.command, result.exit_code,
                                   result.stdout, result.stderr, time.monotonic() - started,
                                   result.status == "timeout", workspace_digest(self.workspace), result.status)

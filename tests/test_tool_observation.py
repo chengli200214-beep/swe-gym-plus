@@ -1,5 +1,6 @@
 """Presentation never manufactures a read or changes durable source evidence."""
 import json
+import os
 
 import pytest
 
@@ -26,7 +27,7 @@ def test_live_and_sft_read_views_are_single_encoded_and_raw_receipts_remain_real
     source = json.loads(raw)
     models = [e for e in events if e["type"] == "model"]
     live = json.loads(models[1]["context_messages"][-1]["content"].split("\n", 1)[1])
-    assert live["stdout"] == source["text"] == "value = 1\n"
+    assert live["stdout"] == source["text"] == "value = 1" + os.linesep
     assert live["source_read"]["sha256"] == source["sha256"]
     assert live["stdout_format"] == SOURCE_FORMAT
     row = {"task_id": result.state.task_id, "run_id": result.run_id,

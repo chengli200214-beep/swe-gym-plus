@@ -51,8 +51,11 @@ leaving an invalid GIT_CONFIG_COUNT after stripping its key fields.
 - Checkpoints preserve tokens/tool calls/time, model messages, next step and
   command receipt. An acknowledged action is recovered without execution again.
 - Unknown model response or tool effect refuses resume. Create a fresh run instead.
-- Cancel is cooperative at runtime boundaries; Linux worker sends SIGTERM then
-  SIGKILL to its child process group after 10 seconds. Windows is demo-only.
+- With explicit NsJail, cancellation is observed within the running tool or
+  evaluator supervisor, including when output pipes have already closed. Its
+  owned process group is killed and reaped before recording a cancelled receipt.
+  Linux worker sends SIGTERM then SIGKILL to the CLI group after 10 seconds as a
+  final guard. Other executors retain boundary cancellation; Windows is demo-only.
 - Worker deadline covers workspace preparation and execution, separately from
   formal evaluation. It is `max_seconds + 150` per subprocess, not a guarantee
   that the entire job finishes within `max_seconds`.
@@ -69,3 +72,18 @@ For a real PostgreSQL run, set `TEST_POSTGRES_URL` to a **dedicated empty test D
 the fixture drops its own jobs table after each test. Never point this at an
 existing deployment. Scripted k=1/2/4 tests validate engineering contracts, not
 real-model accuracy or speedup.
+
+For credential-free same-machine AutoDL acceptance, use a **new output directory**:
+
+```sh
+env -u DEEPSEEK_API_KEY PYTHONPATH=src CODEAGENTBENCH_EXECUTOR=nsjail \
+  CODEAGENTBENCH_ROOTFS=/root/autodl-tmp/nsjail-rootfs-source-20260927 \
+  python scripts/autodl_service_acceptance.py --root /private/new-service-acceptance
+```
+
+This uses TestClient, a private SQLite queue and real CLI/NsJail subprocesses.
+It verifies queued cancellation, patch/evaluation artifact endpoints, both
+running-tool and formal-evaluation cancellation, and recovery after an
+acknowledged edit without replaying that edit. It does **not** validate browser
+interaction, PostgreSQL deployment, authentication or real-model accuracy.
+See [the measured AutoDL results](AUTODL_SERVICE_ACCEPTANCE_20260927.md).

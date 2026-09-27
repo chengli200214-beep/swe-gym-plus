@@ -46,7 +46,10 @@ class Worker:
         if os.name == "nt":
             process.kill() if force else process.terminate()
         else:
-            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+            try:
+                os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+            except ProcessLookupError:
+                pass  # The owned process may finish between poll and killpg.
 
     def _execute(self, job, command, log, *, model=False):
         cancel_at = None
@@ -66,7 +69,10 @@ class Worker:
                         elif time.monotonic() - cancel_at > 10:
                             self._stop(process, force=True)
                     time.sleep(0.25)
-                return process.returncode, cancel_at is not None
+                # A cancellation can race with the final poll/child exit. The
+                # queue's authoritative request must still win over completion.
+                cancelling = self.repository.get(job["run_id"])["status"] == "cancelling"
+                return process.returncode, cancel_at is not None or cancelling
             finally:
                 if process.poll() is None:
                     self._stop(process, force=True)

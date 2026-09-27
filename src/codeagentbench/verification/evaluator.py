@@ -7,6 +7,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
+from typing import Callable
 
 from codeagentbench.models import Candidate, EvaluationResult, TaskRecord, ToolIntent, Verdict
 from codeagentbench.sandbox.executor import BashExecutor
@@ -41,8 +42,11 @@ class Evaluator:
         # evaluator run and makes evaluation fragile when GitHub is unavailable.
         self.cache_root = Path(cache_root).resolve() if cache_root is not None else self.artifact_root.parent / ".repo_cache"
 
-    def evaluate(self, task: TaskRecord, candidate: Candidate, *, timeout_seconds: float = 600.0) -> EvaluationResult:
+    def evaluate(self, task: TaskRecord, candidate: Candidate, *, timeout_seconds: float = 600.0,
+                 cancellation_requested: Callable[[], bool] | None = None) -> EvaluationResult:
         spec = task.eval_spec
+        if cancellation_requested and cancellation_requested():
+            return EvaluationResult(Verdict.BLOCKED, None, None, None, reason="formal evaluation cancelled")
         if timeout_seconds <= 0:
             return EvaluationResult(Verdict.BLOCKED, None, None, None, reason="formal evaluation has no remaining time budget")
         if not spec.test_command:
@@ -72,11 +76,13 @@ class Evaluator:
         try:
             backend = selected_backend()
             if backend in ISOLATED_BACKENDS:
-                receipt = BashExecutor(workspace.path, output_limit=200_000, backend=backend, approved_cache_root=self.cache_root).execute(
+                receipt = BashExecutor(workspace.path, output_limit=200_000, backend=backend, approved_cache_root=self.cache_root,
+                    cancellation_requested=cancellation_requested).execute(
                     ToolIntent("formal-evaluation", spec.test_command, str(workspace.path), remaining_seconds)
                 )
                 if receipt.status != "completed":
-                    return EvaluationResult(Verdict.BLOCKED, None, None, None, stdout=receipt.stdout, stderr=receipt.stderr, duration_seconds=time.monotonic() - started, reason=f"formal test resource limit: {receipt.status}")
+                    reason = "formal evaluation cancelled" if receipt.status == "cancelled" else f"formal test resource limit: {receipt.status}"
+                    return EvaluationResult(Verdict.BLOCKED, None, None, None, stdout=receipt.stdout, stderr=receipt.stderr, duration_seconds=time.monotonic() - started, reason=reason)
                 exit_code, stdout, stderr = receipt.exit_code, receipt.stdout, receipt.stderr
             else:
                 result = subprocess.run(spec.test_command, cwd=workspace.path, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=remaining_seconds, check=False)

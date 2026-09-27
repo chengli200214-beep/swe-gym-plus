@@ -123,3 +123,20 @@ def test_worker_allows_explicit_nsjail_without_falling_back(tmp_path, repository
         Worker(repository, tmp_path / "artifacts", [MANIFEST], executor="local")
     with pytest.raises(ValueError, match="unknown"):
         Worker(repository, tmp_path / "artifacts", [MANIFEST], executor="missing-backend")
+
+
+def test_cancellation_wins_when_it_races_with_child_exit(tmp_path, repository, monkeypatch):
+    row = repository.submit("demo", LIMITS)
+    job = repository.claim()
+    worker = Worker(repository, tmp_path / "artifacts", [MANIFEST], executor="nsjail")
+    class FinishedChild:
+        returncode = 0
+        def __init__(self, *args, **kwargs):
+            repository.cancel(row["run_id"])
+        def poll(self):
+            return 0
+        def wait(self):
+            return 0
+    monkeypatch.setattr("codeagentbench.service.worker.subprocess.Popen", FinishedChild)
+    code, cancelled = worker._execute(job, ["unused"], tmp_path / "worker.log")
+    assert code == 0 and cancelled

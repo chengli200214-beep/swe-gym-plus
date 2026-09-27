@@ -12,6 +12,7 @@ import platform
 import sqlite3
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 from codeagentbench.sandbox.bounded_process import ProcessResult, run_bounded
 
@@ -124,15 +125,17 @@ class NsjailSandbox:
                 target.chmod(0o555 if target.is_dir() else 0o444)
         marker.write_text(json.dumps(identity), encoding="utf-8")
 
-    def execute(self, command: str, cwd: Path, timeout: float, output_limit: int) -> ProcessResult:
+    def execute(self, command: str, cwd: Path, timeout: float, output_limit: int, *,
+                cancellation_requested: Callable[[], bool] | None = None) -> ProcessResult:
         import fcntl
         with (self.run_root / "nsjail.lock").open("a") as lock:
             # Same-workspace concurrency is rejected, not serialized invisibly.
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._prepare()
-            return self._execute_locked(command, cwd, timeout, output_limit)
+            return self._execute_locked(command, cwd, timeout, output_limit, cancellation_requested)
 
-    def _execute_locked(self, command: str, cwd: Path, timeout: float, output_limit: int) -> ProcessResult:
+    def _execute_locked(self, command: str, cwd: Path, timeout: float, output_limit: int,
+                        cancellation_requested: Callable[[], bool] | None) -> ProcessResult:
         relative = cwd.relative_to(self.workspace).as_posix()
         sandbox_cwd = "/workspace" + ("/" + relative if relative != "." else "")
         config = self.run_root / "nsjail.cfg"
@@ -156,5 +159,6 @@ class NsjailSandbox:
         return run_bounded([str(self.binary), "--quiet", "--config", str(config), "--chroot", str(self.root),
                             "--", "/usr/bin/bash", "-c", command], timeout=timeout,
                            output_limit=output_limit,
+                           cancellation_requested=cancellation_requested,
                            writable_paths=tuple(self.root / name for name in
                                                 ("workspace", "tmp", "dev/shm", "var/tmp")))
