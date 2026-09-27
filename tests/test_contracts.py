@@ -333,7 +333,64 @@ def test_repeated_command_stops_even_when_output_changes(tmp_path: Path) -> None
     events = [json.loads(line) for line in (tmp_path / "artifacts/runs/repeated/events.jsonl").read_text().splitlines()]
     assert result.status == "failed"
     assert "no progress" in result.failure_reason
-    assert len([event for event in events if event["type"] == "tool"]) == 3
+    assert len([event for event in events if event["type"] == "tool"]) == 1
+    blocked = [event for event in events if event["type"] == "no_progress"]
+    assert len(blocked) == 2
+    assert [event["blocked_before"] for event in blocked] == [False, True]
+    assert all(event["executed"] is False for event in blocked)
+    assert any("preserve that evidence" in item["content"] for item in result.state.messages)
+
+
+def test_nonconsecutive_repeat_is_blocked_and_prior_receipt_survives_compaction(tmp_path: Path) -> None:
+    task = demo_task()
+    workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "nonconsecutive-repeat")
+    first = 'python -c "print(\'first-evidence\')"'
+    middle = 'python -c "print(\'middle-evidence\')"'
+
+    class RecordingModel(ScriptedModel):
+        prompt_policy = "last-action-v2"
+
+        def __init__(self):
+            super().__init__([{"command": first}, {"command": middle}, {"command": first}, {"done": True}])
+            self.prompts = []
+
+        def complete(self, messages, *, temperature=0.0):
+            self.prompts.append(list(messages))
+            return super().complete(messages, temperature=temperature)
+
+    model = RecordingModel()
+    store = ArtifactStore(tmp_path / "artifacts")
+    result = AgentRuntime(store).run(
+        task, workspace, model, RunConfig(max_steps=4, max_seconds=60, max_tool_calls=4),
+        run_id="nonconsecutive-repeat",
+    )
+    events = [json.loads(line) for line in (store.run_dir("nonconsecutive-repeat") / "events.jsonl").read_text().splitlines()]
+    tools = [event for event in events if event["type"] == "tool"]
+    blocked = [event for event in events if event["type"] == "no_progress"]
+    assert result.status == "completed"
+    assert len(tools) == 2
+    assert len(blocked) == 1 and blocked[0]["executed"] is False
+    latest_prompt = "\n".join(message["content"] for message in model.prompts[-1])
+    assert "middle-evidence" in latest_prompt
+    assert "first-evidence" in latest_prompt
+    assert "preserve that evidence" in latest_prompt
+
+
+def test_same_command_is_allowed_after_workspace_version_changes(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "counter.txt").write_text("0")
+    task = TaskRecord("state-change", str(source), "local", "change the counter")
+    workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "state-change")
+    command = "python -c \"from pathlib import Path; Path('counter.txt').write_text('1')\""
+    store = ArtifactStore(tmp_path / "artifacts")
+    result = AgentRuntime(store).run(
+        task, workspace, ScriptedModel([{"command": command}] * 3 + [{"done": True}]),
+        RunConfig(max_steps=4, max_seconds=60, max_tool_calls=4), run_id="state-change",
+    )
+    events = [json.loads(line) for line in (store.run_dir("state-change") / "events.jsonl").read_text().splitlines()]
+    assert result.status == "completed"
+    assert len([event for event in events if event["type"] == "tool"]) == 2
     assert len([event for event in events if event["type"] == "no_progress"]) == 1
 
 

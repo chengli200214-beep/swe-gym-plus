@@ -78,8 +78,8 @@ def test_adapter_uses_shared_history_policy():
         prepare_context(messages, "typo")
 
 
-@pytest.mark.parametrize("policy,expected_patch", [("last-action-v2", False), ("recent-history-v3", True)])
-def test_runtime_compression_delivers_warning_and_repeat_guard_stays_active(tmp_path, monkeypatch, policy, expected_patch):
+@pytest.mark.parametrize("policy", ["last-action-v2", "recent-history-v3"])
+def test_runtime_compression_preserves_repeat_warning_and_allows_new_action(tmp_path, monkeypatch, policy):
     monkeypatch.setenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", policy)
     source = tmp_path / "source"
     source.mkdir()
@@ -90,7 +90,7 @@ def test_runtime_compression_delivers_warning_and_repeat_guard_stays_active(tmp_
     class FeedbackModel:
         def complete(self, messages, **kwargs):
             view = prepare_context(messages, policy)
-            if any(m["content"].startswith("Harness warning: the same command") for m in view):
+            if any(m["content"].startswith("Harness warning: this exact command") for m in view):
                 action = {"command": 'python -c "from pathlib import Path; Path(\'value.txt\').write_text(\'after\')"'}
             elif any("write_text" in m["content"] for m in view if m["role"] == "assistant"):
                 action = {"done": True}
@@ -101,10 +101,6 @@ def test_runtime_compression_delivers_warning_and_repeat_guard_stays_active(tmp_
 
     result = AgentRuntime(ArtifactStore(tmp_path / "artifacts")).run(
         task, workspace, FeedbackModel(), RunConfig(max_steps=5, max_seconds=60), run_id="probe")
-    assert bool(result.diff) == expected_patch
-    if expected_patch:
-        assert (workspace.path / "value.txt").read_text() == "after"
-        assert result.status == "completed"
-    else:
-        assert result.failure_reason == "no progress: identical command repeated without workspace change"
-        assert result.steps == 3
+    assert result.diff
+    assert (workspace.path / "value.txt").read_text() == "after"
+    assert result.status == "completed"

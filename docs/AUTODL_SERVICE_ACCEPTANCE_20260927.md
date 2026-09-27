@@ -51,10 +51,34 @@
 并以 `CODEAGENTBENCH_TEST_NSJAIL=1`、实际 rootfs 路径执行 `python -m pytest -q`。
 同机验收入口与权限边界见 `service-acceptance.md`，使用新目录，禁止覆盖旧报告。
 
+## PostgreSQL 临时集成验收（2026-09-27）
+
+为补齐数据库集成证据，在 AutoDL Ubuntu 22.04 使用官方软件源安装 PostgreSQL 14，
+并创建仅通过本机 Unix socket 访问的专用空测试库。以 peer 身份认证运行测试；
+没有设置 API key、数据库密码或 TCP 公网监听。
+
+第一次全套调用误把 `CODEAGENTBENCH_EXECUTOR=nsjail` 全局施加到所有测试，
+而不是只启用显式 live-sandbox 准入；测试反复向系统 `/tmp` 复制 rootfs，造成
+overlay 暂时耗尽。该次 JUnit 失败记录保留，不用来推断产品缺陷。确认 pytest 已退出后，
+只删除本次调用创建的临时目录，系统盘恢复到 16% 使用率；此前的 pytest 记录和实验文件
+均未清理。
+
+修正调用后，不强制全局 executor，只设置 `CODEAGENTBENCH_TEST_NSJAIL=1` 运行
+显式 live-sandbox 测试；使用独立数据盘 `--basetemp`、agent-env Python、真实 rootfs
+和专用 `TEST_POSTGRES_URL`。最终私有 JUnit 为
+`experiments/data-quality-audit-20260927/postgres-full-tests-corrected.xml`：
+**278 项通过，0 失败、0 错误、0 跳过**。PostgreSQL 参数化的 6 个服务测试通过，
+覆盖并发任务领取、过期租约隔离、脚本补丁与独立评测、运行中取消、Worker 执行器策略
+和取消竞态。测试后确认 `jobs` 表已由 fixture 删除；专用测试库与临时角色已删除，
+PostgreSQL cluster 已停止，5432 端口无响应。
+
+此结果是 PostgreSQL 14 上的临时集成测试，不等同于生产部署、连接池压力、迁移升级、
+认证授权或多租户隔离验收。复现需新建 disposable DB，不能指向现有队列库。
+
 ## 未覆盖的交付要求
 
-本次是 TestClient + 私有 SQLite + 真实 Worker/NsJail，不是 PostgreSQL 的部署验收，
-也不是浏览器交互、认证授权、多用户隔离或任意 SIGKILL/宿主故障下的恢复证明。
+已有 TestClient + SQLite + Worker/NsJail 与 PostgreSQL 临时集成验收；仍不是浏览器交互、
+生产认证授权、多用户隔离或任意 SIGKILL/宿主故障下的恢复证明。
 页面响应和 artifact API 可用不代表前端加载、空状态、错误、重试及可访问性已完成。
 后续必须逐项验收，不能因此宣布完整项目完成。私有轨迹和权重未上传公开 GitHub，
 外部备份仍按用户要求暂缓。

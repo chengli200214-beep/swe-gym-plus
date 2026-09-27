@@ -36,6 +36,64 @@ def _is_visible_test_run(command: str) -> bool:
     )
 
 
+def _action_receipt_summary(action_id: str, receipt: dict) -> dict:
+    """Retain a small, factual receipt excerpt for later duplicate-action feedback."""
+    stdout, stderr = str(receipt.get("stdout", "")), str(receipt.get("stderr", ""))
+    limit = 1_200
+    return {
+        "action_id": action_id,
+        "exit_code": receipt.get("exit_code"),
+        "stdout": stdout[:limit],
+        "stderr": stderr[:limit],
+        "stdout_truncated": receipt.get("stdout_truncated") is True or len(stdout) > limit,
+        "stderr_truncated": receipt.get("stderr_truncated") is True or len(stderr) > limit,
+        "timed_out": receipt.get("timed_out") is True,
+    }
+
+
+def _action_signature(command: str, workspace_digest: str) -> str:
+    return hashlib.sha256(f"{command}\0{workspace_digest}".encode("utf-8")).hexdigest()
+
+
+def _load_action_history(run_dir, journal: ActionJournal) -> tuple[dict[str, dict], set[str]]:
+    """Rebuild exact no-progress history from durable events and the action journal."""
+    receipts: dict[str, dict] = {}
+    blocked: set[str] = set()
+    events_path = run_dir / "events.jsonl"
+    if events_path.exists():
+        for line in events_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if event.get("type") == "no_progress" and event.get("executed") is False:
+                signature = event.get("command_sha256")
+                if isinstance(signature, str):
+                    blocked.add(signature)
+            if event.get("type") != "tool":
+                continue
+            intent, receipt = event.get("intent"), event.get("receipt")
+            if not isinstance(intent, dict) or not isinstance(receipt, dict):
+                continue
+            command, digest = intent.get("command"), intent.get("pre_digest")
+            if isinstance(command, str) and isinstance(digest, str):
+                signature = _action_signature(command, digest)
+                receipts.setdefault(signature, _action_receipt_summary(intent.get("action_id", ""), receipt))
+
+    records = journal.records()
+    intents = {record.get("action_id"): record for record in records if record.get("type") == "intent"}
+    for receipt in records:
+        if receipt.get("type") != "receipt":
+            continue
+        intent = intents.get(receipt.get("action_id"))
+        if not isinstance(intent, dict):
+            continue
+        command, digest = intent.get("command"), intent.get("pre_digest")
+        if isinstance(command, str) and isinstance(digest, str):
+            signature = _action_signature(command, digest)
+            receipts.setdefault(signature, _action_receipt_summary(receipt.get("action_id", ""), receipt))
+    return receipts, blocked
+
+
 @dataclass(frozen=True)
 class RuntimeResult:
     run_id: str
@@ -73,6 +131,8 @@ class AgentRuntime:
         run_id = run_id or f"{task.instance_id}-{int(time.time())}"
         run_dir = self.artifact_store.run_dir(run_id) if resume else self.artifact_store.start_run(run_id, task.instance_id, config)
         journal = ActionJournal(run_dir / "actions.jsonl")
+        seen_action_receipts, blocked_action_signatures = _load_action_history(run_dir, journal)
+        seen_action_signatures = set(seen_action_receipts)
         executor = BashExecutor(workspace.path, journal, backend=selected_backend(),
                                 cancellation_requested=cancellation_requested)
         ledger = ledger or BudgetLedger(config.max_tokens, config.max_seconds, config.max_cost_usd, config.max_tool_calls)
@@ -118,6 +178,11 @@ class AgentRuntime:
                     messages.append({"role": "user", "content": "Harness warning: the recovered edit failed. Use the actual error and do not repeat it unchanged; the two rejected edit limit still applies."})
                 records = journal.records()
                 intent_record = next(r for r in records if r.get("type") == "intent" and r["action_id"] == state.pending_action_id)
+                signature = hashlib.sha256(
+                    f"{intent_record['command']}\0{intent_record['pre_digest']}".encode("utf-8")
+                ).hexdigest()
+                seen_action_signatures.add(signature)
+                seen_action_receipts.setdefault(signature, _action_receipt_summary(state.pending_action_id, receipt_record))
                 event_path = run_dir / "events.jsonl"
                 tool_already_logged = any(json.loads(line).get("receipt", {}).get("action_id") == state.pending_action_id for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip())
                 if not tool_already_logged:
@@ -130,6 +195,10 @@ class AgentRuntime:
             elif checkpoint["workspace_digest"] != workspace.digest:
                 raise RuntimeError("workspace differs from checkpoint; resume refused")
             previous_signature, repeated = state.previous_signature, state.repeated
+            # Older checkpoints only stored the last signature. Keep that
+            # evidence when upgrading a run into the stronger no-progress guard.
+            if previous_signature:
+                seen_action_signatures.add(previous_signature)
             tested_diff = state.tested_diff
             visible_test_passed = bool(tested_diff and tested_diff == workspace.diff())
             for message in messages[-6:]:
@@ -216,9 +285,53 @@ class AgentRuntime:
                         state.failure_reason = "unverified: no recognized passing post-edit visible test"
                     break
                 action_id = f"{run_id}-action-{step:04d}"
+                pre_digest = workspace.digest
+                signature = hashlib.sha256(f"{tool_command}\0{pre_digest}".encode("utf-8")).hexdigest()
+                if signature in seen_action_signatures:
+                    already_blocked = signature in blocked_action_signatures
+                    if not already_blocked:
+                        blocked_action_signatures.add(signature)
+                    protocol_result = {
+                        "error": "exact command already executed for unchanged workspace version",
+                        "executed": False,
+                        "command_sha256": signature,
+                        "workspace_digest": pre_digest,
+                    }
+                    prior_receipt = seen_action_receipts.get(signature)
+                    if prior_receipt is not None:
+                        protocol_result["prior_real_tool_receipt"] = prior_receipt
+                    messages.append({
+                        "role": "user",
+                        "content": "Protocol result:\n" + json.dumps(protocol_result, ensure_ascii=False),
+                    })
+                    message = (
+                        "Harness warning: this exact command already ran against the unchanged workspace version. "
+                        "It was not executed again. Use the prior real receipt above; preserve that evidence and choose a different action."
+                    )
+                    if already_blocked:
+                        message += " The same command was repeated after this warning, so the run is stopping."
+                        state.status = "failed"
+                        state.failure_reason = "no progress: repeated command requested again after it was blocked"
+                    messages.append({"role": "user", "content": message})
+                    state.pending_action_text = ""
+                    state.next_step = step + 1
+                    self.artifact_store.append_event(run_id, {
+                        "type": "no_progress",
+                        "action_id": action_id,
+                        "reason": "exact command already executed for unchanged workspace version",
+                        "command_sha256": signature,
+                        "workspace_digest": pre_digest,
+                        "executed": False,
+                        "blocked_before": already_blocked,
+                    })
+                    self._checkpoint(state, ledger, workspace, messages)
+                    if failure_injector:
+                        failure_injector("after_checkpoint")
+                    if already_blocked:
+                        break
+                    continue
                 if not ledger.can_spend(tool_calls=1) or ledger.snapshot.remaining_seconds <= 0:
                     raise BudgetExceeded("insufficient budget before tool execution")
-                pre_digest = workspace.digest
                 pre_diff = workspace.diff()
                 intent = ToolIntent(action_id, tool_command, str(workspace.path), min(120.0, ledger.snapshot.remaining_seconds), action.read is None, action_id, pre_digest, json.dumps(action.to_dict(), ensure_ascii=False))
                 state.pending_action_id = action_id
@@ -278,7 +391,9 @@ class AgentRuntime:
                 # Repeating the same command against the same checkout is still
                 # a no-progress loop. A real edit changes the workspace digest,
                 # so a necessary post-edit retest starts a new streak.
-                signature = hashlib.sha256(f"{intent.command}\0{pre_digest}".encode("utf-8")).hexdigest()
+                signature = _action_signature(intent.command, pre_digest)
+                seen_action_signatures.add(signature)
+                seen_action_receipts.setdefault(signature, _action_receipt_summary(action_id, asdict(receipt)))
                 repeated = repeated + 1 if signature == previous_signature else 0
                 previous_signature = signature
                 state.previous_signature, state.repeated = previous_signature, repeated

@@ -43,6 +43,31 @@ def test_bounded_output_and_idempotent_failed_feedback():
     assert compact_context(result) == result
 
 
+def test_repeat_block_keeps_prior_receipt_and_harness_warning():
+    messages = history("latest unrelated output") + [
+        {"role": "assistant", "content": '{"command":"grep target src.py","done":false,"message":"repeat"}'},
+        {"role": "user", "content": "Protocol result:\n" + json.dumps({
+            "error": "exact command already executed",
+            "executed": False,
+            "prior_real_tool_receipt": {
+                "action_id": "actual-action-1",
+                "exit_code": 1,
+                "stdout": "matching real source evidence",
+                "stderr": "",
+                "timed_out": False,
+            },
+        })},
+        {"role": "user", "content": "Harness warning: preserve that evidence and choose a different action."},
+    ]
+    result = compact_context(messages)
+    rendered = "\n".join(message["content"] for message in result)
+    assert "latest unrelated output" in rendered
+    assert "matching real source evidence" in rendered
+    assert "preserve that evidence" in rendered
+    assert '"executed": false' in rendered
+    assert rendered.count("Tool result:\n") == 1
+
+
 def test_receipt_without_action_fails_closed():
     with pytest.raises(ValueError, match="lost"):
         compact_context(history()[:2] + history()[3:])

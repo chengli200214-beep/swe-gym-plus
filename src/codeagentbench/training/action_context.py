@@ -18,7 +18,9 @@ def compact_context(messages: list[dict[str, str]], *, output_chars: int = 4000)
     result = [dict(messages[0]), dict(messages[1])]
     if any(m["content"].startswith("Protocol result:\n") for m in messages[2:]):
         from codeagentbench.harness.context_history import recent_history
-        return recent_history(messages, turns=1)
+        # Preserve the last real receipt before the rejected action as well as
+        # the rejected action/result pair and its harness intervention.
+        return recent_history(messages, turns=2)
     tool_indices = [i for i, m in enumerate(messages[2:], 2) if m["role"] == "user" and m["content"].startswith("Tool result:\n")]
     if not tool_indices:
         return result

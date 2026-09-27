@@ -57,6 +57,37 @@ def test_resume_refuses_unknown_model_outcome(tmp_path):
         runtime.run(task, workspace, ScriptedModel([]), RunConfig(), run_id="unknown-model", resume=True)
 
 
+@pytest.mark.parametrize("crash_phase", ["after_receipt", "after_checkpoint"])
+def test_resume_does_not_reexecute_previously_seen_command(tmp_path, crash_phase):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "counter.txt").write_text("0")
+    task = TaskRecord("repeat-resume", str(source), "local", "increment once")
+    workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "repeat-resume")
+    store = ArtifactStore(tmp_path / "artifacts")
+    runtime = AgentRuntime(store)
+    command = "python -c \"print('stable receipt')\""
+
+    def crash(phase):
+        if phase == crash_phase:
+            raise RuntimeError("worker crash")
+
+    with pytest.raises(RuntimeError, match="worker crash"):
+        runtime.run(
+            task, workspace, ScriptedModel([{"command": command}]), RunConfig(max_steps=4, max_seconds=60),
+            run_id="repeat-resume", failure_injector=crash,
+        )
+    result = runtime.run(
+        task, workspace, ScriptedModel([{"command": command}, {"done": True}]),
+        RunConfig(max_steps=4, max_seconds=60), run_id="repeat-resume", resume=True,
+    )
+    events = [json.loads(line) for line in (store.run_dir("repeat-resume") / "events.jsonl").read_text().splitlines()]
+    assert result.status == "completed"
+    assert (workspace.path / "counter.txt").read_text() == "0"
+    assert sum(event["type"] == "tool" for event in events) == 1
+    assert any(event["type"] == "no_progress" and event["executed"] is False for event in events)
+
+
 def test_artifact_paths_cannot_escape_root(tmp_path):
     with pytest.raises(ValueError, match="invalid run id"):
         ArtifactStore(tmp_path).run_dir("../../outside")
