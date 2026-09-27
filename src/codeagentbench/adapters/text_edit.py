@@ -5,13 +5,11 @@ the model must locate the file and choose both exact source and replacement.
 """
 from __future__ import annotations
 
-import base64
-import json
-import os
-import shlex
-import subprocess
 from dataclasses import asdict, dataclass
-from pathlib import PurePosixPath
+
+from codeagentbench.adapters.file_tools import (
+    READ_SOURCE_PROGRAM, fixed_python_command, validate_source_path,
+)
 
 
 @dataclass(frozen=True)
@@ -30,11 +28,7 @@ def validate_edit(payload: object) -> TextEdit:
     if any(not isinstance(v, str) or len(v) > 8000 for v in payload.values()):
         raise ValueError("edit fields must be strings of at most 8000 characters")
     path, before, after = (payload[k] for k in ("path", "before", "after"))
-    parts = path.split("/")
-    if (not path or len(path) > 512 or PurePosixPath(path).is_absolute()
-            or "\\" in path or ":" in path or any(ord(c) < 32 for c in path)
-            or any(p in {"", ".", "..", ".git"} for p in parts)):
-        raise ValueError("edit path must be relative POSIX source path, not Git metadata")
+    validate_source_path(path)
     if not before or before == after:
         raise ValueError("edit before must be non-empty and differ from after")
     return TextEdit(path, before, after)
@@ -43,22 +37,11 @@ def validate_edit(payload: object) -> TextEdit:
 # Runs inside the same restricted tool environment as bash. Atomic replacement
 # protects against partial writes; syntax is checked before opening an output.
 # No repository imports or test code run as part of the adapter.
-_PROGRAM = r'''
-import base64, json, os, stat, sys, tempfile
-from pathlib import Path
-proposal = json.loads(base64.b64decode(sys.argv[1]).decode('utf-8'))
-path = Path(proposal['path'])
-root = Path.cwd().resolve()
-for part in (path, *path.parents):
-    if part.is_symlink():
-        raise ValueError('edit rejects symlink components')
-if not path.resolve().is_relative_to(root):
-    raise ValueError('edit path escapes workspace')
-info = path.stat()
-if not stat.S_ISREG(info.st_mode) or info.st_size > 1048576 or info.st_nlink != 1:
-    raise ValueError('edit requires a regular single-link file of at most 1 MiB')
-raw = path.read_bytes()
-text = raw.decode('utf-8')
+_PROGRAM = READ_SOURCE_PROGRAM + "\n" + r'''
+
+import tempfile
+if proposal.get('expected_sha256') and hashlib.sha256(raw).hexdigest() != proposal['expected_sha256']:
+    raise ValueError('source changed since read; read the file again before editing')
 count = text.count(proposal['before'])
 if count != 1:
     raise ValueError('before must match exactly once in current source; observed ' + str(count))
@@ -84,11 +67,12 @@ print('EDIT_APPLIED ' + proposal['path'])
 '''.strip()
 
 
-def edit_command(edit: TextEdit) -> str:
+def edit_command(edit: TextEdit, *, expected_sha256: str | None = None) -> str:
     """Encode data, never interpolate it as shell/Python source."""
     edit = validate_edit(edit.to_dict())
-    program = base64.b64encode(_PROGRAM.encode()).decode()
-    data = base64.b64encode(json.dumps(edit.to_dict(), ensure_ascii=False).encode()).decode()
-    loader = "import base64;exec(base64.b64decode('" + program + "'))"
-    args = ["python", "-c", loader, data]
-    return subprocess.list2cmdline(args) if os.name == "nt" else shlex.join(args)
+    data = edit.to_dict()
+    if expected_sha256 is not None:
+        if len(expected_sha256) != 64 or any(c not in "0123456789abcdef" for c in expected_sha256):
+            raise ValueError("invalid observed source SHA256")
+        data["expected_sha256"] = expected_sha256
+    return fixed_python_command(_PROGRAM, data)

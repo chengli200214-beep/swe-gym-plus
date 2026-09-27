@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 
 from codeagentbench.adapters.text_edit import TextEdit, edit_command, validate_edit
+from codeagentbench.adapters.source_read import SourceRead, read_command, validate_read
 
 
 @dataclass(frozen=True)
@@ -17,18 +18,23 @@ class AgentAction:
     done: bool = False
     message: str = ""
     edit: TextEdit | None = None
+    read: SourceRead | None = None
 
     @property
     def executable(self) -> bool:
-        return not self.done and bool(self.command or self.edit)
+        return not self.done and bool(self.command or self.edit or self.read)
 
     def to_dict(self) -> dict:
         if self.edit is not None:
             return {"edit": self.edit.to_dict(), "done": False, "message": self.message}
+        if self.read is not None:
+            return {"read": self.read.to_dict(), "done": False, "message": self.message}
         return {"command": self.command, "done": self.done, "message": self.message}
 
-    def tool_command(self) -> str:
-        return edit_command(self.edit) if self.edit is not None else self.command
+    def tool_command(self, *, expected_sha256: str | None = None) -> str:
+        if self.edit is not None:
+            return edit_command(self.edit, expected_sha256=expected_sha256)
+        return read_command(self.read) if self.read is not None else self.command
 
 
 _DSML_MARKER = "\uFF5C\uFF5CDSML\uFF5C\uFF5C"
@@ -148,7 +154,7 @@ def parse_action(text: str) -> AgentAction:
                     parsed, _ = decoder.raw_decode(candidate[index:])
                 except json.JSONDecodeError:
                     continue
-                if isinstance(parsed, dict) and ("command" in parsed or "done" in parsed or "edit" in parsed):
+                if isinstance(parsed, dict) and any(k in parsed for k in ("command", "done", "edit", "read")):
                     action_candidates.append(parsed)
             if action_candidates:
                 # Some models emit an entire imagined tool transcript in one
@@ -185,6 +191,10 @@ def parse_action(text: str) -> AgentAction:
         if done or "command" in payload or set(payload) - {"edit", "done", "message"}:
             raise ValueError("edit cannot include command, done=true or unknown fields")
         return AgentAction(edit=validate_edit(payload["edit"]), message=str(payload.get("message", "")))
+    if "read" in payload:
+        if done or "command" in payload or set(payload) - {"read", "done", "message"}:
+            raise ValueError("read cannot include command, done=true or unknown fields")
+        return AgentAction(read=validate_read(payload["read"]), message=str(payload.get("message", "")))
     command = payload.get("command", "")
     if not isinstance(command, str) or (not done and not command.strip()):
         raise ValueError("action needs a non-empty command unless done=true")

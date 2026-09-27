@@ -3,6 +3,7 @@ import json
 import pytest
 
 from codeagentbench.models import TaskRecord
+from codeagentbench.verification.evaluator import Evaluator
 from scripts.autodl_dev_gate import freeze, load_frozen
 
 
@@ -36,3 +37,9 @@ def test_gate_does_not_relabel_eval_or_reuse_training_tasks(tmp_path):
         freeze(manifest, tmp_path / "gate", ids)
     with pytest.raises(ValueError, match="three distinct"):
         freeze(manifest, tmp_path / "gate", [ids[0]] * 3)
+
+
+def test_explicit_evaluation_cache_reuses_admission_snapshots(tmp_path):
+    cache = tmp_path / "immutable-cache"
+    evaluator = Evaluator(tmp_path / "evaluations", cache_root=cache)
+    assert evaluator.cache_root == cache.resolve()

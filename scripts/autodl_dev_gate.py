@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import os
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -78,7 +80,7 @@ def admit(root: Path, cache: Path):
     return summary
 
 
-def run(root: Path, model_path: Path):
+def run(root: Path, model_path: Path, *, cache: Path | None = None):
     tasks = load_frozen(root)
     output = root / "run-report.json"
     if output.exists():
@@ -94,14 +96,22 @@ def run(root: Path, model_path: Path):
         max_tool_calls=16, max_tokens=180000, max_seconds=600, max_cost_usd=0)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
     source_files = [Path("src/codeagentbench") / p for p in (
-        "runtime.py", "adapters/action.py", "adapters/text_edit.py", "harness/context_history.py",
-        "sandbox/nsjail.py", "sandbox/executor.py", "sandbox/bounded_process.py")]
+        "runtime.py", "models.py", "adapters/action.py", "adapters/text_edit.py", "adapters/file_tools.py",
+        "adapters/source_read.py", "harness/source_evidence.py", "harness/context_history.py",
+        "sandbox/nsjail.py", "sandbox/executor.py", "sandbox/bounded_process.py",
+        "verification/evaluator.py")]
+    source_files.append(Path("scripts/autodl_dev_gate.py"))
     report = {"autonomous": True, "manifest_sha256": digest(root / "manifest.json"),
               "git_commit": commit, "source_sha256": {str(p): digest(p) for p in source_files},
+              "environment": {"python": sys.version, "backend": selected_backend(),
+                  "rootfs": os.environ.get("CODEAGENTBENCH_ROOTFS", "default"),
+                  "nsjail_sha256": digest(os.environ.get("CODEAGENTBENCH_NSJAIL", "/root/autodl-tmp/bin/nsjail")),
+                  "packages": {name: importlib.metadata.version(name) for name in ("torch", "transformers", "peft")}},
               "model": str(model_path), "config": config.to_dict(), "tasks": [],
               "trained": False, "gate_passed": False}
     store = ArtifactStore(root / "artifacts")
-    manager = WorkspaceManager(store.root)
+    cache = cache or root / ".repo_cache"
+    manager = WorkspaceManager(store.root, cache_root=cache)
     for task, quality in zip(tasks, reports):
         record = {"task_id": task.instance_id, "admitted": quality["admitted"],
                   "quality_sha256": digest(root / "quality" / (task.instance_id + ".json"))}
@@ -111,7 +121,7 @@ def run(root: Path, model_path: Path):
             run_id = "base7b-edit-" + task.instance_id
             workspace = manager.create(task, run_id)
             result = AgentRuntime(store).run(task, workspace, model, config, run_id=run_id)
-            evaluation = Evaluator(root / "evaluations").evaluate(task,
+            evaluation = Evaluator(root / "evaluations", cache_root=cache).evaluate(task,
                 Candidate("candidate-0", run_id, result.diff, result.status), timeout_seconds=180)
             store.append_event(run_id, {"type": "evaluation", **evaluation.to_dict()})
             record.update({"run_id": run_id, "status": result.status, "failure_reason": result.failure_reason,
@@ -149,7 +159,7 @@ def main():
     else:
         if args.model is None:
             p.error("run requires model")
-        result = run(args.root, args.model)
+        result = run(args.root, args.model, cache=args.cache)
     print(json.dumps(result), flush=True)
 
 

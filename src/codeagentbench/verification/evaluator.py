@@ -33,13 +33,13 @@ def _test_names_in_output(names: tuple[str, ...], output: str, exit_code: int) -
 class Evaluator:
     """Run formal tests using EvalSpec, never using the selector's score."""
 
-    def __init__(self, artifact_root: str | Path = "artifacts/evaluations") -> None:
+    def __init__(self, artifact_root: str | Path = "artifacts/evaluations", *, cache_root: str | Path | None = None) -> None:
         self.artifact_root = Path(artifact_root)
         self.artifact_root.mkdir(parents=True, exist_ok=True)
         # Reuse the agent/quality cache rooted beside the evaluation artifacts.
         # Keeping a second cache here forces another network clone for every
         # evaluator run and makes evaluation fragile when GitHub is unavailable.
-        self.cache_root = self.artifact_root.parent / ".repo_cache"
+        self.cache_root = Path(cache_root).resolve() if cache_root is not None else self.artifact_root.parent / ".repo_cache"
 
     def evaluate(self, task: TaskRecord, candidate: Candidate, *, timeout_seconds: float = 600.0) -> EvaluationResult:
         spec = task.eval_spec
@@ -72,7 +72,7 @@ class Evaluator:
         try:
             backend = selected_backend()
             if backend in ISOLATED_BACKENDS:
-                receipt = BashExecutor(workspace.path, output_limit=200_000, backend=backend).execute(
+                receipt = BashExecutor(workspace.path, output_limit=200_000, backend=backend, approved_cache_root=self.cache_root).execute(
                     ToolIntent("formal-evaluation", spec.test_command, str(workspace.path), remaining_seconds)
                 )
                 if receipt.status != "completed":

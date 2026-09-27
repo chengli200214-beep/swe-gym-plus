@@ -167,6 +167,7 @@ class ToolIntent:
     side_effect: bool = True
     idempotency_key: str = ""
     pre_digest: str = ""
+    action_json: str = ""
 
 
 @dataclass(frozen=True)
@@ -264,6 +265,7 @@ class RunState:
     repeated: int = 0
     protocol_corrections: int = 0
     failed_edits: int = 0
+    source_observations: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

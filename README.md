@@ -23,7 +23,13 @@ frozen SWE-Gym revision, a quality report for every task, and complete artifacts
 - P3/GRPO: formal reward interface is present, but no GRPO benchmark claim is
   made. GRPO remains a separate follow-up experiment.
 
-The latest typed-editor implementation and three-task development diagnostic is
+The latest source-observation implementation and newly frozen development gate is
+[`docs/AUTODL_SOURCE_OBSERVATION_20260927.md`](docs/AUTODL_SOURCE_OBSERVATION_20260927.md).
+Typed edits now require genuine versioned read evidence; the three new tasks
+retain their original admission failures and disclosed execution adapters.
+This engineering change does not itself establish model repair improvement.
+
+The previous typed-editor implementation and three-task development diagnostic is
 [`docs/AUTODL_TYPED_EDIT_20260927.md`](docs/AUTODL_TYPED_EDIT_20260927.md):
 0/3 autonomous repairs, with failures caused by guessed paths/source before any
 actual source read. The edit/recovery contracts pass, but training is gated off.

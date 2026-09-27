@@ -21,6 +21,10 @@ def edit(before="value = 1", after="value = 2", path="value.py"):
     return {"edit": {"path": path, "before": before, "after": after}, "done": False}
 
 
+def read():
+    return {"read": {"path": "value.py", "start_line": 1, "end_line": 80}}
+
+
 @pytest.mark.parametrize("path", ["../x.py", "/tmp/x.py", "C:/x.py", "x\\y.py", ".git/config", "a/.git/x", "./x", "a//x", "a/../x", "x\n.py"])
 def test_invalid_paths_rejected(path):
     with pytest.raises(ValueError, match="path"):
@@ -108,13 +112,13 @@ def make_run(tmp_path, responses, *, steps=8, injector=None):
 
 def test_runtime_executes_edit_records_receipt_and_preserves_context(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", "recent-history-v3")
-    result, workspace, store, _ = make_run(tmp_path, [edit(), {"command": 'python -m unittest -q'}, {"done": True}])
+    result, workspace, store, _ = make_run(tmp_path, [read(), edit(), {"command": 'python -m unittest -q'}, {"done": True}])
     assert result.diff and result.status == "completed" and result.visible_test_passed
     assert (workspace.path / "value.py").read_text() == "value = 2\n"
     events = [json.loads(s) for s in (store.run_dir(result.run_id) / "events.jsonl").read_text().splitlines()]
     calls = [e for e in events if e["type"] == "model"]
-    assert '"edit"' in calls[1]["context_messages"][2]["content"]
-    assert "EDIT_APPLIED value.py" in str(calls[1]["context_messages"])
+    assert '"edit"' in calls[2]["context_messages"][4]["content"]
+    assert "EDIT_APPLIED value.py" in str(calls[2]["context_messages"])
     row = {"task_id": "typed-edit-test", "run_id": result.run_id, "agent_status": "completed", "evaluation_verdict": "passed", "messages": [{"role": "user", "content": next(e["content"] for e in events if e["type"] == "prompt")}] + [{"role": "assistant", "content": e["content"]} for e in calls]}
     # A synthetic passed row is only a converter contract, not eligibility evidence.
     converted = examples(row, events, policy="recent-history-v3")
@@ -123,7 +127,7 @@ def test_runtime_executes_edit_records_receipt_and_preserves_context(tmp_path, m
 
 def test_format_retry_keeps_real_rejection_and_never_runs_truncated_command(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", "recent-history-v3")
-    result, workspace, _, _ = make_run(tmp_path, ['{"command":"echo truncated', edit(), {"done": True}])
+    result, workspace, _, _ = make_run(tmp_path, ['{"command":"echo truncated', read(), edit(), {"done": True}])
     assert result.diff and result.state.protocol_corrections == 1
     assert (workspace.path / "value.py").read_text() == "value = 2\n"
     assert any(m["content"].startswith("Protocol result:") for m in result.state.messages)
@@ -138,24 +142,29 @@ def test_format_retry_and_edit_retry_are_bounded(tmp_path):
 
 
 def test_two_failed_edits_stop_before_third_write(tmp_path):
-    result, workspace, _, _ = make_run(tmp_path, [edit(before="missing"), edit(after="value = ("), edit()])
+    result, workspace, _, _ = make_run(tmp_path, [read(), edit(after="value = ("), edit(after="value = ["), edit()])
     assert result.failure_reason == "edit correction exhausted: two rejected edits"
-    assert result.steps == 2 and result.state.failed_edits == 2 and not result.diff
+    assert result.steps == 3 and result.state.failed_edits == 2 and not result.diff
 
 
 def test_edit_recovery_uses_existing_once_only_journal(tmp_path):
+    calls = 0
+
     def crash(where):
+        nonlocal calls
         if where == "after_receipt":
-            raise RuntimeError("crash after edit receipt")
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("crash after edit receipt")
 
     with pytest.raises(RuntimeError, match="crash"):
-        make_run(tmp_path, [edit()], injector=crash)
+        make_run(tmp_path, [read(), edit()], injector=crash)
     source = tmp_path / "source"
     task = TaskRecord("typed-edit-test", str(source), "local", "Change value to 2")
     workspace = Workspace("edit-test", tmp_path / "workspaces/edit-test/workspace", task.base_commit)
     result = AgentRuntime(ArtifactStore(tmp_path / "artifacts")).run(task, workspace, ScriptedModel([{"done": True}]), RunConfig(max_steps=8, max_seconds=60), run_id="edit-test", resume=True)
     assert result.status == "completed" and "value = 2" in result.diff
-    assert result.state.spent_tokens == 64
+    assert result.state.spent_tokens == 96
 
 
 def test_recovery_cannot_erase_rejected_edit_limit(tmp_path):
@@ -165,15 +174,15 @@ def test_recovery_cannot_erase_rejected_edit_limit(tmp_path):
         nonlocal calls
         if where == "after_receipt":
             calls += 1
-            if calls == 2:
+            if calls == 3:
                 raise RuntimeError("second rejection recorded")
 
     with pytest.raises(RuntimeError, match="second rejection"):
-        make_run(tmp_path, [edit(before="missing"), edit(after="value = (")], injector=crash)
+        make_run(tmp_path, [read(), edit(after="value = ("), edit(after="value = [")], injector=crash)
     task = TaskRecord("typed-edit-test", str(tmp_path / "source"), "local", "Change value to 2")
     workspace = Workspace("edit-test", tmp_path / "workspaces/edit-test/workspace", task.base_commit)
     result = AgentRuntime(ArtifactStore(tmp_path / "artifacts")).run(task, workspace, ScriptedModel([edit()]), RunConfig(max_steps=8, max_seconds=60), run_id="edit-test", resume=True)
-    assert not result.diff and result.state.failed_edits == 2 and result.steps == 2
+    assert not result.diff and result.state.failed_edits == 2 and result.steps == 3
     assert result.failure_reason == "edit correction exhausted: two rejected edits"
 
 
@@ -181,7 +190,7 @@ def test_recovery_cannot_erase_rejected_edit_limit(tmp_path):
 def test_live_editor_and_retry_in_nsjail(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEAGENTBENCH_EXECUTOR", "nsjail")
     monkeypatch.setenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", "recent-history-v3")
-    result, workspace, _, _ = make_run(tmp_path, [edit(before="missing"), edit(), {"command": "python -m unittest -q"}, {"done": True}])
+    result, workspace, _, _ = make_run(tmp_path, [read(), edit(after="value = ("), edit(), {"command": "python -m unittest -q"}, {"done": True}])
     assert result.status == "completed" and result.visible_test_passed, result.failure_reason
     assert result.state.failed_edits == 1
     assert "value = 2" in result.diff
