@@ -80,9 +80,10 @@ def admit(root: Path, cache: Path):
     return summary
 
 
-def run(root: Path, model_path: Path, *, cache: Path | None = None):
+def run(root: Path, model_path: Path, *, cache: Path | None = None, output_root: Path | None = None):
     tasks = load_frozen(root)
-    output = root / "run-report.json"
+    destination = root if output_root is None else output_root
+    output = destination / "run-report.json"
     if output.exists():
         raise ValueError("preserve the existing experiment report")
     reports = [json.loads((root / "quality" / (t.instance_id + ".json")).read_text()) for t in tasks]
@@ -90,6 +91,8 @@ def run(root: Path, model_path: Path, *, cache: Path | None = None):
         raise ValueError("admission identity mismatch")
     if not any(r["admitted"] for r in reports):
         raise ValueError("no admitted tasks; fix environment, do not run the model")
+    if output_root is not None:
+        destination.mkdir(parents=True, exist_ok=False)
     os.environ["CODEAGENTBENCH_LOCAL_PROMPT_POLICY"] = "recent-history-v3"
     model = LocalHFModel(model_path, max_new_tokens=2048)
     config = RunConfig(model=str(model_path), temperature=0, max_steps=16,
@@ -102,6 +105,7 @@ def run(root: Path, model_path: Path, *, cache: Path | None = None):
         "verification/evaluator.py")]
     source_files.append(Path("scripts/autodl_dev_gate.py"))
     report = {"autonomous": True, "manifest_sha256": digest(root / "manifest.json"),
+              "development_retest": output_root is not None,
               "git_commit": commit, "source_sha256": {str(p): digest(p) for p in source_files},
               "environment": {"python": sys.version, "backend": selected_backend(),
                   "rootfs": os.environ.get("CODEAGENTBENCH_ROOTFS", "default"),
@@ -109,7 +113,7 @@ def run(root: Path, model_path: Path, *, cache: Path | None = None):
                   "packages": {name: importlib.metadata.version(name) for name in ("torch", "transformers", "peft")}},
               "model": str(model_path), "config": config.to_dict(), "tasks": [],
               "trained": False, "gate_passed": False}
-    store = ArtifactStore(root / "artifacts")
+    store = ArtifactStore(destination / "artifacts")
     cache = cache or root / ".repo_cache"
     manager = WorkspaceManager(store.root, cache_root=cache)
     for task, quality in zip(tasks, reports):
@@ -121,7 +125,7 @@ def run(root: Path, model_path: Path, *, cache: Path | None = None):
             run_id = "base7b-edit-" + task.instance_id
             workspace = manager.create(task, run_id)
             result = AgentRuntime(store).run(task, workspace, model, config, run_id=run_id)
-            evaluation = Evaluator(root / "evaluations", cache_root=cache).evaluate(task,
+            evaluation = Evaluator(destination / "evaluations", cache_root=cache).evaluate(task,
                 Candidate("candidate-0", run_id, result.diff, result.status), timeout_seconds=180)
             store.append_event(run_id, {"type": "evaluation", **evaluation.to_dict()})
             record.update({"run_id": run_id, "status": result.status, "failure_reason": result.failure_reason,
@@ -145,7 +149,10 @@ def main():
     p.add_argument("--task-ids", nargs=3)
     p.add_argument("--cache", type=Path)
     p.add_argument("--model", type=Path)
+    p.add_argument("--output-root", type=Path, help="new directory for an explicitly labeled development retest")
     args = p.parse_args()
+    if args.output_root is not None and args.phase != "run":
+        p.error("output-root is only valid for run; it never changes the frozen task set")
     if selected_backend() != "nsjail" or os.getenv("DEEPSEEK_API_KEY"):
         raise ValueError("this experiment requires credential-free same-machine NsJail")
     if args.phase == "freeze":
@@ -159,7 +166,7 @@ def main():
     else:
         if args.model is None:
             p.error("run requires model")
-        result = run(args.root, args.model, cache=args.cache)
+        result = run(args.root, args.model, cache=args.cache, output_root=args.output_root)
     print(json.dumps(result), flush=True)
 
 

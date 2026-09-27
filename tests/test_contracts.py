@@ -68,6 +68,17 @@ def test_system_prompt_requires_new_symbol_import_check() -> None:
     assert "newly referenced name is defined or imported" in prompt
 
 
+def test_system_prompt_guides_source_navigation_without_task_answers() -> None:
+    prompt = AgentRuntime._system_prompt()
+    assert "actual filenames/package metadata" in prompt
+    assert "Search for implementation symbols with line numbers" in prompt
+    assert "Do not page a long file from line 1" in prompt
+    assert "not by changing tests" in prompt
+    assert "preserve indentation" in prompt
+    assert "before substring copied exactly from a successful read" in prompt
+    assert "moto/" not in prompt
+
+
 def test_parse_action_repairs_unescaped_quotes_inside_command() -> None:
     action = parse_action(
         '{"command": "findstr /n /c:"launch_template" moto\\\\ec2\\\\models.py", '

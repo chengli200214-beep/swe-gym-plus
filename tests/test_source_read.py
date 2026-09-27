@@ -71,6 +71,19 @@ def test_guessed_or_unread_before_never_executes(tmp_path):
         grounded_command(parse_action(json.dumps(edit())), observations)
 
 
+def test_observed_but_reformatted_before_explains_whitespace_without_repair(tmp_path):
+    raw = b"def f():\n    return 1\n"
+    (tmp_path / "value.py").write_bytes(raw)
+    observations = []
+    execute(tmp_path, read(), observations)
+    proposal = {"edit": {"path": "value.py", "before": "def f():\nreturn 1",
+                         "after": "def f():\n    return 2"}}
+    with pytest.raises(ValueError, match="preserve every leading space and newline"):
+        grounded_command(parse_action(json.dumps(proposal)), observations)
+    assert (tmp_path / "value.py").read_bytes() == raw
+    assert observations[0]["text"] == raw.decode()
+
+
 def test_stale_file_fails_closed_even_when_before_still_matches(tmp_path):
     path = tmp_path / "value.py"
     path.write_bytes(b"value = 1\nother = 3\n")

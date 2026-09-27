@@ -12,7 +12,12 @@ def grounded_command(action: AgentAction, observations: list[dict]) -> str:
     matching = [o for o in observations if o["path"] == action.edit.path
                 and action.edit.before in o["text"]]
     if not matching:
-        raise ValueError("edit requires a successful read action of this exact path and before text; search then read actual source before editing")
+        if any(o["path"] == action.edit.path for o in observations):
+            raise ValueError("before text is not an exact substring of the successful read action; "
+                             "preserve every leading space and newline from its decoded text field, "
+                             "and use a small unique substring; no edit ran")
+        raise ValueError("edit requires a successful read action of this exact path and before text; "
+                         "search with line numbers, then read actual implementation source before editing")
     return action.tool_command(expected_sha256=matching[-1]["sha256"])
 
 
