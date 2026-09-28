@@ -9,7 +9,7 @@ from codeagentbench.adapters.model import ScriptedModel
 from codeagentbench.adapters.text_edit import TextEdit, edit_command, validate_edit
 from codeagentbench.harness.context_history import recent_history
 from codeagentbench.models import RunConfig, TaskRecord, ToolIntent
-from codeagentbench.runtime import AgentRuntime
+from codeagentbench.runtime import AgentRuntime, _is_visible_test_run
 from codeagentbench.sandbox.executor import BashExecutor
 from codeagentbench.sandbox.workspace import Workspace, WorkspaceManager
 from codeagentbench.storage.artifacts import ArtifactStore
@@ -181,13 +181,25 @@ def test_protocol_correction_streak_resets_after_successful_tool_progress(tmp_pa
 
 
 def test_unverified_done_requires_visible_test_before_completion(tmp_path):
-    result, _, _, _ = make_run(
+    result, _, store, _ = make_run(
         tmp_path,
         [read(), edit(), {"done": True}, {"command": "python -m unittest -q"}, {"done": True}],
         require_visible_test_before_done=True, allowed_test_command="python -m unittest -q",
     )
     assert result.status == "completed" and result.visible_test_passed
     assert result.state.unverified_finish_rejections == 1
+    events = [json.loads(line) for line in
+              (store.run_dir(result.run_id) / "events.jsonl").read_text().splitlines()]
+    assert any("Exact command: python -m unittest -q" in message["content"]
+               and "no pipe" in message["content"]
+               for event in events if event.get("type") == "model"
+               for message in event.get("context_messages", []))
+
+
+def test_piped_test_cannot_certify_visible_pass():
+    assert _is_visible_test_run("python -m pytest -q tests/test_public.py")
+    assert not _is_visible_test_run("python -m pytest -q tests/test_public.py | tail -20")
+    assert not _is_visible_test_run("python -m pytest -q tests/test_public.py; true")
 
 
 def test_visible_test_gate_requires_the_exact_allowed_command(tmp_path):

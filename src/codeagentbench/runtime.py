@@ -31,6 +31,11 @@ _TEST_RUNNER = re.compile(r"(?:^|[;&|]\s*)(?:python(?:3)?\s+-m\s+)?(?:pytest|uni
 
 def _is_visible_test_run(command: str) -> bool:
     """Conservatively identify a real test run, not a filename or version check."""
+    # A pipeline such as ``pytest ... | tail`` reports the last command's
+    # status, not pytest's. Redirection and shell chaining also make the
+    # receipt ambiguous, so none can certify a passing visible test.
+    if any(operator in command for operator in ("|", ";", "&", ">", "<", "\n", "\r")):
+        return False
     return bool(_TEST_RUNNER.search(command)) and not any(
         flag in command for flag in ("--version", "--help", "--collect-only")
     )
@@ -382,7 +387,10 @@ class AgentRuntime:
                             "role": "user",
                             "content": (
                                 "Harness warning: this patch has not passed a visible post-edit test. Do not finish yet; "
-                                "run the task's relevant allowed test command, inspect its real result, fix failures, and retest."
+                                "run the exact allowed_test_command from the task prompt with no pipe, redirection, "
+                                "suffix or other shell command. The command must exit successfully after the edit; "
+                                "inspect its real result, fix failures, and retest. "
+                                f"Exact command: {view.allowed_test_command}"
                             ),
                         })
                         state.pending_action_text = ""
