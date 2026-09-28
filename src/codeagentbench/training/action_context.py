@@ -37,6 +37,11 @@ def compact_context(messages: list[dict[str, str]], *, output_chars: int = 4000)
     if not required <= observation.keys():
         raise ValueError("incomplete real tool receipt")
     bounded = {k: observation[k] for k in ("exit_code", "stdout", "stderr", "timed_out")}
+    # A projected source read must remain identifiable after compression;
+    # protocol recovery may need to reuse this genuine observation.
+    for key in ("stdout_format", "source_read"):
+        if key in observation:
+            bounded[key] = observation[key]
     for key in ("stdout", "stderr"):
         text = str(bounded[key])
         bounded[key] = text[:output_chars]

@@ -73,7 +73,7 @@ def rejection(report):
     return "control_mismatch"
 
 
-def seed_ok(row, train):
+def seed_ok(row, train, *, visible_test_commands=None):
     from codeagentbench.adapters.action import parse_action
     if row.get("task_id") not in train or row.get("evaluation_verdict") != "passed" or row.get("agent_status") != "completed":
         return False
@@ -83,7 +83,10 @@ def seed_ok(row, train):
     prompt = json.loads(messages[0]["content"])
     if prompt.get("instance_id") != row["task_id"]:
         return False
-    if prompt.get("allowed_test_command") or prompt.get("test_patch") or prompt.get("gold_patch"):
+    allowed_test_command = prompt.get("allowed_test_command", "")
+    if (not isinstance(allowed_test_command, str)
+            or (allowed_test_command and (visible_test_commands or {}).get(row["task_id"]) != allowed_test_command)
+            or prompt.get("test_patch") or prompt.get("gold_patch")):
         return False
     assistants = [m for m in messages if m.get("role") == "assistant"]
     return bool(assistants and parse_action(assistants[-1]["content"]).done)

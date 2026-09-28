@@ -71,8 +71,10 @@ def test_system_prompt_requires_new_symbol_import_check() -> None:
 def test_system_prompt_guides_source_navigation_without_task_answers() -> None:
     prompt = AgentRuntime._system_prompt()
     assert "actual filenames/package metadata" in prompt
-    assert "Search for implementation symbols with line numbers" in prompt
-    assert "Do not page a long file from line 1" in prompt
+    assert "Use typed search on a real implementation file" in prompt
+    assert "Search returns locations, not evidence" in prompt
+    assert "If an edit is rejected, do not repeat its before text" in prompt
+    assert "Read at most 80 lines around a relevant hit" in prompt
     assert "not by changing tests" in prompt
     assert "preserving indentation and newlines" in prompt
     assert "before substring copied exactly from a successful read" in prompt
@@ -374,6 +376,8 @@ def test_nonconsecutive_repeat_is_blocked_and_prior_receipt_survives_compaction(
     assert "middle-evidence" in latest_prompt
     assert "first-evidence" in latest_prompt
     assert "preserve that evidence" in latest_prompt
+    assert "same shell command against this unchanged workspace" in latest_prompt
+    assert "minimal edit grounded in observed implementation" in latest_prompt
 
 
 def test_same_command_is_allowed_after_workspace_version_changes(tmp_path: Path) -> None:

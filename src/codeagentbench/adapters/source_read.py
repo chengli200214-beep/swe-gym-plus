@@ -23,9 +23,10 @@ def validate_read(payload: object) -> SourceRead:
         raise ValueError("read requires exactly path/start_line/end_line")
     path = validate_source_path(payload["path"])
     start, end = payload["start_line"], payload["end_line"]
-    if type(start) is not int or type(end) is not int or not 1 <= start <= end < start + 80:
-        raise ValueError("read needs positive integer lines covering at most 80 lines")
-    return SourceRead(path, start, end)
+    if type(start) is not int or type(end) is not int or not 1 <= start <= end:
+        raise ValueError("read needs positive integer lines with end_line >= start_line")
+    # Bound an oversized request while keeping its useful starting location.
+    return SourceRead(path, start, min(end, start + 79))
 
 
 _PROGRAM = READ_SOURCE_PROGRAM + r'''

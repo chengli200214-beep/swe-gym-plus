@@ -5,14 +5,17 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
+import shlex
 
 from codeagentbench.runtime import AgentRuntime
 from codeagentbench.adapters.action import parse_action
 from codeagentbench.training.action_context import POLICY, encode_next_action
-from codeagentbench.harness.context_history import POLICIES, prepare_context
+from codeagentbench.harness.context_history import POLICIES
 from codeagentbench.harness.source_evidence import grounded_command, observe_source
 from codeagentbench.harness.tool_observation import tool_observation
 from codeagentbench.adapters.repository_inventory import inventory_command, inventory_packet
+from codeagentbench.tasks.manifest import load_manifest
 from scripts.accelerate_campaign import seed_ok
 
 
@@ -34,52 +37,120 @@ def examples(row, events, *, policy=POLICY):
             raise ValueError("initial inventory disagrees with the real observation")
     elif inventories:
         raise ValueError("real inventory is absent from the initial model context")
-    history = [{"role": "system", "content": AgentRuntime._system_prompt()}, {"role": "user", "content": prompts[0]}]
-    output, pending, observations = [], None, []
+    output, pending, observations, terminated = [], None, [], False
     model_texts = [e["content"] for e in events if e.get("type") == "model"]
     if model_texts != [m["content"] for m in row["messages"] if m["role"] == "assistant"]:
         raise ValueError("source model turns and events disagree")
     for event in events:
         if event.get("type") == "model":
+            if terminated:
+                raise ValueError("model action follows verified termination")
             if pending is not None:
-                raise ValueError("model action has no real tool receipt")
-            action = parse_action(event["content"])
-            canonical = json.dumps(action.to_dict(), ensure_ascii=False, separators=(",", ":"))
+                raise ValueError("model action has no real tool receipt or rejection")
+            if event.get("context_contract") != "runtime-once-v1":
+                raise ValueError("source lacks the runtime-once context contract")
+            if event.get("prompt_policy") != policy:
+                raise ValueError("source inference policy differs from export policy")
             recorded = event.get("context_messages")
-            if recorded is not None:
-                if len(recorded) < 2 or recorded[1] != history[1] or recorded[0]["role"] != "system":
-                    raise ValueError("recorded inference context disagrees with original task")
-                context = prepare_context(recorded, policy)
-            else:
-                context = prepare_context(history, policy)
-            output.append({"task_id": row["task_id"], "run_id": row["run_id"], "action_index": len(output), "source_evaluation_verdict": "passed", "assistant_only_loss": True, "next_action_only_loss": True, "prompt_policy": policy, "messages": context + [{"role": "assistant", "content": canonical}]})
-            history.append({"role": "assistant", "content": canonical})
-            pending = None if action.done else (action, grounded_command(action, observations))
+            if (not isinstance(recorded, list) or len(recorded) < 2
+                    or any(not isinstance(m, dict) or m.get("role") not in {"system", "user", "assistant"}
+                           or not isinstance(m.get("content"), str) for m in recorded)
+                    or recorded[0] != {"role": "system", "content": AgentRuntime._system_prompt()}
+                    or recorded[1] != {"role": "user", "content": prompts[0]}):
+                raise ValueError("recorded inference context disagrees with deployed prompt or original task")
+            try:
+                action = parse_action(event["content"])
+            except ValueError:
+                action = None  # A real protocol_rejection must follow; never supervise malformed output.
+            pending = (action, [dict(m) for m in recorded])
+            if action is not None and action.done:
+                output.append(_example(row, policy, pending[1], action, len(output)))
+                pending = None
+                terminated = True
         elif event.get("type") == "tool":
-            if pending is None or event["intent"]["command"] != pending[1]:
+            if pending is None or pending[0] is None or not pending[0].executable:
+                raise ValueError("tool receipt has no executable model action")
+            action, context = pending
+            if event["intent"]["command"] != grounded_command(action, observations):
                 raise ValueError("tool receipt does not match real model action")
             recorded_action = event["intent"].get("action_json")
-            if recorded_action and json.loads(recorded_action) != pending[0].to_dict():
+            if recorded_action and json.loads(recorded_action) != action.to_dict():
                 raise ValueError("journal action differs from actual model action")
             receipt = event["receipt"]
             if "command" in receipt and receipt["command"] != event["intent"]["command"]:
                 raise ValueError("receipt command differs from journal intent")
-            observe_source(observations, pending[0], receipt)
-            history.append({"role": "user", "content": "Tool result:\n" + json.dumps(tool_observation(pending[0], receipt), ensure_ascii=False)})
+            tool_observation(action, receipt)  # Reject invalid projected observations.
+            observe_source(observations, action, receipt)
+            output.append(_example(row, policy, context, action, len(output)))
             pending = None
-    if pending is not None or not output or not json.loads(output[-1]["messages"][-1]["content"])["done"]:
+        elif event.get("type") in {"protocol_rejection", "no_progress", "source_navigation_blocked"}:
+            if pending is None:
+                raise ValueError("rejection has no preceding model action")
+            kind, action = event["type"], pending[0]
+            if kind == "protocol_rejection" and action is not None:
+                try:
+                    grounded_command(action, observations)
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError("protocol rejection has no invalid action or grounding error")
+            if kind == "no_progress" and (action is None or not action.executable):
+                raise ValueError("repeat block has no executable action")
+            if kind == "source_navigation_blocked" and (action is None or action.read is None):
+                raise ValueError("source navigation block has no read action")
+            pending = None
+    if pending is not None or not terminated or not output:
         raise ValueError("source lacks verified termination")
     return output
 
 
-def prepare(source: Path, output: Path, split_path: Path, tokenizer, max_seq_len=8192, *, policy=POLICY):
+def _example(row, policy, context, action, index):
+    canonical = json.dumps(action.to_dict(), ensure_ascii=False, separators=(",", ":"))
+    return {"task_id": row["task_id"], "run_id": row["run_id"], "action_index": index,
+            "source_evaluation_verdict": "passed", "assistant_only_loss": True,
+            "next_action_only_loss": True, "prompt_policy": policy,
+            "messages": context + [{"role": "assistant", "content": canonical}]}
+
+
+def visible_test_commands_from_manifest(path: Path) -> dict[str, str]:
+    """Opt in only to explicitly declared, bounded public-test commands.
+
+    The operator must separately verify the path exists in the base checkout;
+    this syntax/split check does not establish that provenance on its own.
+    """
+    commands = {}
+    for task in load_manifest(path).tasks:
+        command = task.metadata.get("agent_test_command")
+        if not command:
+            continue
+        if task.split != "train" or not isinstance(command, str):
+            raise ValueError("visible-test manifest must contain train tasks with string commands")
+        try:
+            tokens = shlex.split(command)
+        except ValueError as exc:
+            raise ValueError("invalid visible-test command") from exc
+        if len(tokens) != 6 or tokens[:5] != ["python", "-m", "pytest", "-q", "-x"]:
+            raise ValueError("visible-test command must be a bounded pytest path")
+        parts = tokens[5].split("/")
+        if (parts[0] != "tests" or len(parts) < 2
+                or any(part in {"", ".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", part)
+                       for part in parts[1:])):
+            raise ValueError("visible-test command must target a relative tests/ path")
+        commands[task.instance_id] = command
+    return commands
+
+
+def prepare(source: Path, output: Path, split_path: Path, tokenizer, max_seq_len=8192, *,
+            policy=POLICY, visible_test_manifest: Path | None = None):
     if output.exists():
         raise ValueError("preserve prior data; output already exists")
     split = json.loads(split_path.read_text())
     rows = [json.loads(s) for s in source.read_text().splitlines() if s]
+    visible_test_commands = (visible_test_commands_from_manifest(visible_test_manifest)
+                             if visible_test_manifest else None)
     records, receipts, seen, lengths, target_lengths = [], [], set(), [], []
     for row in rows:
-        if row["task_id"] in seen or not seed_ok(row, split["train"]):
+        if row["task_id"] in seen or not seed_ok(row, split["train"], visible_test_commands=visible_test_commands):
             raise ValueError("source must be unique, blind, completed, passed and train-only")
         seen.add(row["task_id"])
         event_path = Path(row["events_path"])
@@ -95,7 +166,7 @@ def prepare(source: Path, output: Path, split_path: Path, tokenizer, max_seq_len
     with output.open("x", encoding="utf-8") as stream:
         for record in records:
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
-    audit = {"policy": policy, "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(), "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest(), "distinct_tasks": len(seen), "records": len(records), "done_examples": sum(json.loads(r["messages"][-1]["content"])["done"] for r in records), "total_tokens": sum(lengths), "max_tokens": max(lengths), "supervised_tokens": sum(target_lengths), "max_target_tokens": max(target_lengths), "target_tokens_above_768": sum(n > 768 for n in target_lengths), "truncated": 0, "rejected": [], "real_receipts_verified": True, "prior_assistant_loss_masked": True, "sources": receipts}
+    audit = {"policy": policy, "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "split_sha256": hashlib.sha256(split_path.read_bytes()).hexdigest(), "visible_test_manifest_sha256": hashlib.sha256(visible_test_manifest.read_bytes()).hexdigest() if visible_test_manifest else None, "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest(), "distinct_tasks": len(seen), "records": len(records), "done_examples": sum(json.loads(r["messages"][-1]["content"])["done"] for r in records), "total_tokens": sum(lengths), "max_tokens": max(lengths), "supervised_tokens": sum(target_lengths), "max_target_tokens": max(target_lengths), "target_tokens_above_768": sum(n > 768 for n in target_lengths), "truncated": 0, "rejected": [], "real_receipts_verified": True, "prior_assistant_loss_masked": True, "sources": receipts}
     output.with_suffix(".audit.json").write_text(json.dumps(audit, indent=2) + "\n")
     return audit
 
@@ -107,10 +178,13 @@ def main():
     p.add_argument("--split", type=Path, required=True)
     p.add_argument("--model", required=True)
     p.add_argument("--policy", choices=sorted(POLICIES), default=POLICY)
+    p.add_argument("--visible-test-manifest", type=Path,
+                   help="explicit train-only manifest for public base-checkout visible tests")
     args = p.parse_args()
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model, local_files_only=True, trust_remote_code=False)
-    print(json.dumps(prepare(args.source, args.output, args.split, tokenizer, policy=args.policy)), flush=True)
+    print(json.dumps(prepare(args.source, args.output, args.split, tokenizer, policy=args.policy,
+                             visible_test_manifest=args.visible_test_manifest)), flush=True)
 
 
 if __name__ == "__main__":

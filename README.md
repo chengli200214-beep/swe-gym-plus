@@ -6,9 +6,22 @@ and owns the reliability layer: isolated workspaces, bash execution, durable
 action receipts, conservative recovery, evidence-aware context compression,
 whole-task budgets, independent patch evaluation, and multi-rollout selection.
 
-The repository intentionally stops short of claiming SWE-Gym benchmark results.
-The demo fixture is a deterministic integration test; real claims require a
-frozen SWE-Gym revision, a quality report for every task, and complete artifacts.
+The repository intentionally stops short of claiming a sealed SWE-Gym
+benchmark result. The demo fixture is a deterministic integration test; real
+claims require a frozen SWE-Gym revision, a quality report for every task, and
+complete artifacts.
+
+As of 2026-09-29, the current 7B Base has produced one nonempty patch that
+passed independent tests in a frozen three-task **development** retest with
+public visible-test commands. That Agent run nevertheless exhausted its step
+budget, the other two patches did not pass, and a follow-up configuration
+returned 0/3. There is no demonstrated stable repair-rate or SFT improvement.
+The historical 20-task/250-action export fails the current typed-tool training
+alignment gate; no new aligned SFT has been started. Details and caveats are in
+[`docs/VGPU32_RETEST_20260929.md`](docs/VGPU32_RETEST_20260929.md) and
+[`docs/TRAINING_DATA_READINESS_20260928.md`](docs/TRAINING_DATA_READINESS_20260928.md).
+The latest completion matrix, including a passing but non-completed train-task
+candidate, is in [`docs/PROJECT_STATUS_20260929.md`](docs/PROJECT_STATUS_20260929.md).
 
 ## Implemented scope
 
@@ -18,29 +31,31 @@ frozen SWE-Gym revision, a quality report for every task, and complete artifacts
 - P1: checkpoint/recovery decisions, cumulative token/time/cost budgets,
   no-progress detection, evidence-aware compression, independent candidates,
   rule-based selection, honest metrics, and an optional FastAPI run index.
-- P2: interaction-preserving SFT conversion, QLoRA training configuration and
-  a remote SFT v4 experiment with six independently evaluated trajectories.
+- P2: SFT data conversion and historical BF16 LoRA experiments with negative
+  or inconclusive evaluation results; the current typed-tool training-data
+  audit and new controlled comparison remain open.
 - P3/GRPO: formal reward interface is present, but no GRPO benchmark claim is
   made. GRPO remains a separate follow-up experiment.
 
 The latest source-observation implementation and newly frozen development gate is
 [`docs/AUTODL_SOURCE_OBSERVATION_20260927.md`](docs/AUTODL_SOURCE_OBSERVATION_20260927.md).
-Typed edits now require genuine versioned read evidence; the three new tasks
-retain their original admission failures and disclosed execution adapters.
-This engineering change does not itself establish model repair improvement.
+Typed edits now require genuine versioned read evidence. The three
+development tasks retain their original admission controls and evaluator
+separation. This engineering change does not itself establish model repair
+improvement.
 
 The previous typed-editor implementation and three-task development diagnostic is
 [`docs/AUTODL_TYPED_EDIT_20260927.md`](docs/AUTODL_TYPED_EDIT_20260927.md):
-0/3 autonomous repairs, with failures caused by guessed paths/source before any
-actual source read. The edit/recovery contracts pass, but training is gated off.
+0/3 autonomous repairs at that time, with failures caused by guessed
+paths/source before any actual source read. The edit/recovery contracts pass.
 These previously exposed development tasks are not a fresh sealed evaluation.
 
 The preceding same-machine AutoDL experiment (2026-09-27) is in
 [`docs/AUTODL_EXPERIMENT_20260927.md`](docs/AUTODL_EXPERIMENT_20260927.md).
 The NsJail backend runs agent tools, admission controls and independent tests
-on the 5090 instance without falling back to an unisolated host shell. The 7B
-diagnostics produced one real but incorrect edit; autonomous repair is still
-unproven. Thirteen runs on one task are not thirteen successful trajectories.
+on the AutoDL instance without falling back to an unisolated host shell.
+Early 7B diagnostics produced an incorrect edit; later retests are documented
+above. Thirteen runs on one task are not thirteen successful trajectories.
 The next acceptance gate is documented in
 [`docs/EXECUTION_PLAN_20260927.md`](docs/EXECUTION_PLAN_20260927.md).
 
@@ -101,21 +116,22 @@ currency cap.
 Recheck the [official pricing](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)
 before each paid experiment, since rates may change.
 
-Real DeepSeek CLI runs require `CODEAGENTBENCH_EXECUTOR=bwrap`, bubblewrap on
-Linux, `DEEPSEEK_MIN_BALANCE_CNY` (the account balance floor), and
+Real DeepSeek CLI runs require an explicitly configured isolated executor
+(`CODEAGENTBENCH_EXECUTOR=bwrap` or `nsjail` where provisioned),
+`DEEPSEEK_MIN_BALANCE_CNY` (the account balance floor), and
 `DEEPSEEK_MAX_OUTPUT_TOKENS<=1024`. Before each paid request the adapter checks
-the official CNY balance and rejects requests over 100 KB. The sandbox exposes
-only read-only `/usr`, a writable per-run checkout, temporary storage and
-synthetic devices; it does not expose the host's private experiment directory,
-API key, network or `/proc`. This is defense in depth, **not a guaranteed
+the official CNY balance and rejects requests over 100 KB. Configure the
+isolated backend so the agent can access only its per-run checkout and required
+runtime dependencies, not private experiment files, credentials or the network.
+This is defense in depth, **not a guaranteed
 financial hard cap**: billing can lag, prices can change, and other users of
 the same account can spend concurrently. For a ¥30 maximum from a ¥35.40
 starting balance, set the floor to ¥5.40 and verify the provider balance after
 each short run.
 Use `run ... --skip-evaluation` for a paid DeepSeek rollout, then exit that
 process and run `evaluate-run MANIFEST RUN_ID --repo-root ROOT` in a **new
-process without `DEEPSEEK_API_KEY`**. Formal tests also use bubblewrap when
-`CODEAGENTBENCH_EXECUTOR=bwrap`; do not execute candidate code in a process
+process without `DEEPSEEK_API_KEY`**. Formal tests use the same explicit
+isolated backend; do not execute candidate code in a process
 that still has model credentials.
 
 Security boundary: the current local bash executor checks its starting working

@@ -87,3 +87,21 @@ running-tool and formal-evaluation cancellation, and recovery after an
 acknowledged edit without replaying that edit. It does **not** validate browser
 interaction, PostgreSQL deployment, authentication or real-model accuracy.
 See [the measured AutoDL results](AUTODL_SERVICE_ACCEPTANCE_20260927.md).
+
+## Local browser acceptance (2026-09-29)
+
+With the service bound to local loopback, a real browser submitted the private
+`demo-calculator` task. A separate local scripted worker completed it, and
+the list showed `completed`, independent evaluation `passed`, and 96 tokens.
+The summary, real event trajectory, patch, and checkpoint tabs were opened.
+A second queued run was cancelled in the UI, returned `cancelled`, then
+resumed from the UI and completed with independent evaluation `passed`.
+The empty state was visible before the first submission.
+
+The browser test also found that a selected run's artifact panel stayed on
+`尚无此项产物` after its worker completed, even as the list updated. The page now
+refreshes the selected artifact once when its status changes; a third queued
+run visibly changed to `completed / passed` and the panel filled with its
+summary without another click. These three runs use the trusted scripted
+calculator demo on Windows; they are service/UI acceptance, **not** SWE-Gym
+repair scores or proof of public-service security.

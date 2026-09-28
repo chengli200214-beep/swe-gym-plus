@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from codeagentbench.adapters.text_edit import TextEdit, edit_command, validate_edit
 from codeagentbench.adapters.source_read import SourceRead, read_command, validate_read
+from codeagentbench.adapters.source_search import SourceSearch, search_command, validate_search
 
 
 @dataclass(frozen=True)
@@ -19,22 +20,29 @@ class AgentAction:
     message: str = ""
     edit: TextEdit | None = None
     read: SourceRead | None = None
+    search: SourceSearch | None = None
 
     @property
     def executable(self) -> bool:
-        return not self.done and bool(self.command or self.edit or self.read)
+        return not self.done and bool(self.command or self.edit or self.read or self.search)
 
     def to_dict(self) -> dict:
         if self.edit is not None:
             return {"edit": self.edit.to_dict(), "done": False, "message": self.message}
         if self.read is not None:
             return {"read": self.read.to_dict(), "done": False, "message": self.message}
+        if self.search is not None:
+            return {"search": self.search.to_dict(), "done": False, "message": self.message}
         return {"command": self.command, "done": self.done, "message": self.message}
 
     def tool_command(self, *, expected_sha256: str | None = None) -> str:
         if self.edit is not None:
             return edit_command(self.edit, expected_sha256=expected_sha256)
-        return read_command(self.read) if self.read is not None else self.command
+        if self.read is not None:
+            return read_command(self.read)
+        if self.search is not None:
+            return search_command(self.search)
+        return self.command
 
 
 _DSML_MARKER = "\uFF5C\uFF5CDSML\uFF5C\uFF5C"
@@ -154,7 +162,7 @@ def parse_action(text: str) -> AgentAction:
                     parsed, _ = decoder.raw_decode(candidate[index:])
                 except json.JSONDecodeError:
                     continue
-                if isinstance(parsed, dict) and any(k in parsed for k in ("command", "done", "edit", "read")):
+                if isinstance(parsed, dict) and any(k in parsed for k in ("command", "done", "edit", "read", "search")):
                     action_candidates.append(parsed)
             if action_candidates:
                 # Some models emit an entire imagined tool transcript in one
@@ -195,6 +203,10 @@ def parse_action(text: str) -> AgentAction:
         if done or "command" in payload or set(payload) - {"read", "done", "message"}:
             raise ValueError("read cannot include command, done=true or unknown fields")
         return AgentAction(read=validate_read(payload["read"]), message=str(payload.get("message", "")))
+    if "search" in payload:
+        if done or "command" in payload or set(payload) - {"search", "done", "message"}:
+            raise ValueError("search cannot include command, done=true or unknown fields")
+        return AgentAction(search=validate_search(payload["search"]), message=str(payload.get("message", "")))
     command = payload.get("command", "")
     if not isinstance(command, str) or (not done and not command.strip()):
         raise ValueError("action needs a non-empty command unless done=true")

@@ -10,8 +10,6 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from codeagentbench.harness.context_history import POLICIES, prepare_context
-
 
 @dataclass(frozen=True)
 class ModelResponse:
@@ -41,7 +39,11 @@ class ScriptedModel:
 
 
 class LocalHFModel:
-    """Local Transformers model for offline base-vs-adapter comparisons."""
+    """Render caller-prepared context verbatim for local model comparisons.
+
+    Runtime owns context selection. Reapplying its policy here can discard
+    recorded evidence and interventions (ADR 0012).
+    """
 
     def __init__(
         self,
@@ -51,6 +53,8 @@ class LocalHFModel:
         max_new_tokens: int = 512,
         local_files_only: bool = True,
     ) -> None:
+        from codeagentbench.harness.context_history import POLICIES
+
         try:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -98,12 +102,10 @@ class LocalHFModel:
         self._model.eval()
 
     def request_token_bound(self, messages: list[dict[str, str]]) -> int:
-        messages = self._prepare_messages(messages)
         prompt = self._tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         return len(self._tokenizer(prompt, add_special_tokens=False)["input_ids"]) + self.max_new_tokens
 
     def complete(self, messages: list[dict[str, str]], *, temperature: float = 0.0) -> ModelResponse:
-        messages = self._prepare_messages(messages)
         inputs = self._tokenizer.apply_chat_template(
             messages,
             tokenize=True,
@@ -132,9 +134,6 @@ class LocalHFModel:
             prompt_tokens=int(inputs["input_ids"].shape[-1]),
             completion_tokens=int(generated.shape[-1]),
         )
-
-    def _prepare_messages(self, messages: list[dict[str, str]]) -> list[dict[str, str]]:
-        return prepare_context(messages, self.prompt_policy)
 
 
 class DeepSeekModel:

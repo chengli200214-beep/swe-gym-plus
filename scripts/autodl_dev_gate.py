@@ -6,10 +6,12 @@ retained rather than replaced with tasks selected by model success.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import hashlib
 import importlib.metadata
 import json
 import os
+import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +30,31 @@ from codeagentbench.verification.evaluator import Evaluator
 
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def outcome_flags(result, evaluation):
+    """Do not conflate a passing candidate patch with a clean agent finish."""
+    patch_verified = bool(result.diff) and evaluation.passed
+    run_completed = result.status == "completed"
+    return {"patch_verified": patch_verified, "run_completed": run_completed,
+            "autonomous_success": patch_verified and run_completed,
+            "final_patch_sha256": hashlib.sha256(result.diff.encode("utf-8")).hexdigest()
+            if result.diff else None}
+
+
+def visible_test_command(workspace: Path, directory: str) -> str:
+    """Only name an already-visible test directory; never inspect EvalSpec."""
+    if not isinstance(directory, str) or not re.fullmatch(r"tests(?:/[A-Za-z0-9_-]+)+", directory):
+        raise ValueError("visible test directory must be a simple relative path under tests/")
+    root = workspace.resolve()
+    target = root
+    for part in directory.split("/"):
+        target = target / part
+        if target.is_symlink():
+            raise ValueError("visible test directory contains a symlink")
+    if not target.is_dir() or not target.resolve().is_relative_to(root):
+        raise ValueError("visible test directory is not in the unmodified task checkout")
+    return f"python -m pytest -q -x {directory}"
 
 
 def freeze(source: Path, root: Path, task_ids: list[str]):
@@ -80,8 +107,12 @@ def admit(root: Path, cache: Path):
     return summary
 
 
-def run(root: Path, model_path: Path, *, cache: Path | None = None, output_root: Path | None = None):
+def run(root: Path, model_path: Path, *, cache: Path | None = None, output_root: Path | None = None,
+        visible_test_directories: dict[str, str] | None = None):
     tasks = load_frozen(root)
+    visible_test_directories = visible_test_directories or {}
+    if visible_test_directories and (output_root is None or set(visible_test_directories) != {t.instance_id for t in tasks}):
+        raise ValueError("visible-test retest requires a new output root and one directory for every frozen task")
     destination = root if output_root is None else output_root
     output = destination / "run-report.json"
     if output.exists():
@@ -96,18 +127,22 @@ def run(root: Path, model_path: Path, *, cache: Path | None = None, output_root:
     os.environ["CODEAGENTBENCH_LOCAL_PROMPT_POLICY"] = "recent-history-v3"
     model = LocalHFModel(model_path, max_new_tokens=2048)
     config = RunConfig(model=str(model_path), temperature=0, max_steps=16,
-        max_tool_calls=16, max_tokens=180000, max_seconds=600, max_cost_usd=0, repository_inventory=True)
+        max_tool_calls=16, max_tokens=180000, max_seconds=600, max_cost_usd=0,
+        repository_inventory=True, require_visible_test_before_done=True)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
     source_files = [Path("src/codeagentbench") / p for p in (
         "runtime.py", "models.py", "adapters/action.py", "adapters/text_edit.py", "adapters/file_tools.py",
         "adapters/source_read.py", "harness/source_evidence.py", "harness/context_history.py",
         "harness/tool_observation.py",
+        "adapters/source_search.py",
         "adapters/repository_inventory.py", "harness/repository_inventory.py",
         "sandbox/nsjail.py", "sandbox/executor.py", "sandbox/bounded_process.py",
         "verification/evaluator.py")]
     source_files.append(Path("scripts/autodl_dev_gate.py"))
     report = {"autonomous": True, "manifest_sha256": digest(root / "manifest.json"),
               "development_retest": output_root is not None,
+              "visible_test_directories": visible_test_directories,
+              "visible_test_rule": "existing base-checkout directories only; no evaluator selectors or test patches",
               "git_commit": commit, "source_sha256": {str(p): digest(p) for p in source_files},
               "environment": {"python": sys.version, "backend": selected_backend(),
                   "rootfs": os.environ.get("CODEAGENTBENCH_ROOTFS", "default"),
@@ -126,21 +161,29 @@ def run(root: Path, model_path: Path, *, cache: Path | None = None, output_root:
         else:
             run_id = "base7b-edit-" + task.instance_id
             workspace = manager.create(task, run_id)
-            result = AgentRuntime(store).run(task, workspace, model, config, run_id=run_id)
+            agent_task = task
+            if visible_test_directories:
+                command = visible_test_command(workspace.path, visible_test_directories[task.instance_id])
+                agent_task = replace(task, metadata={**task.metadata, "agent_test_command": command})
+                record["visible_test_command"] = command
+            result = AgentRuntime(store).run(agent_task, workspace, model, config, run_id=run_id)
             evaluation = Evaluator(destination / "evaluations", cache_root=cache).evaluate(task,
                 Candidate("candidate-0", run_id, result.diff, result.status), timeout_seconds=180)
             store.append_event(run_id, {"type": "evaluation", **evaluation.to_dict()})
             record.update({"run_id": run_id, "status": result.status, "failure_reason": result.failure_reason,
                            "steps": result.steps, "diff_present": bool(result.diff),
                            "independent_evaluation": evaluation.to_dict(),
-                           "autonomous_success": bool(result.diff) and evaluation.passed})
+                           **outcome_flags(result, evaluation)})
         report["tasks"].append(record)
-        report["gate_passed"] = any(r.get("autonomous_success") for r in report["tasks"])
+        # The frozen gate asks for a passing autonomous patch, even if the run
+        # then fails during its final protocol step. Report both facts.
+        report["gate_passed"] = any(r.get("patch_verified") for r in report["tasks"])
         output.write_text(json.dumps(report, indent=2))
         print(json.dumps({k: record[k] for k in record if k != "independent_evaluation"}), flush=True)
     return {"gate_passed": report["gate_passed"], "frozen": len(tasks),
             "admitted": sum(r["admitted"] for r in reports),
-            "passed": sum(bool(r.get("autonomous_success")) for r in report["tasks"])}
+            "passed": sum(bool(r.get("patch_verified")) for r in report["tasks"]),
+            "normally_completed_passed": sum(bool(r.get("autonomous_success")) for r in report["tasks"])}
 
 
 def main():
@@ -152,9 +195,13 @@ def main():
     p.add_argument("--cache", type=Path)
     p.add_argument("--model", type=Path)
     p.add_argument("--output-root", type=Path, help="new directory for an explicitly labeled development retest")
+    p.add_argument("--visible-test-directories",
+                   help="JSON mapping of each frozen task ID to an existing checkout tests/ directory; development retest only")
     args = p.parse_args()
     if args.output_root is not None and args.phase != "run":
         p.error("output-root is only valid for run; it never changes the frozen task set")
+    if args.visible_test_directories is not None and args.phase != "run":
+        p.error("visible-test-directories is only valid for run")
     if selected_backend() != "nsjail" or os.getenv("DEEPSEEK_API_KEY"):
         raise ValueError("this experiment requires credential-free same-machine NsJail")
     if args.phase == "freeze":
@@ -168,7 +215,12 @@ def main():
     else:
         if args.model is None:
             p.error("run requires model")
-        result = run(args.root, args.model, cache=args.cache, output_root=args.output_root)
+        visible_dirs = (json.loads(args.visible_test_directories)
+                        if args.visible_test_directories is not None else None)
+        if visible_dirs is not None and not isinstance(visible_dirs, dict):
+            raise ValueError("visible-test-directories must be a JSON object")
+        result = run(args.root, args.model, cache=args.cache, output_root=args.output_root,
+                     visible_test_directories=visible_dirs)
     print(json.dumps(result), flush=True)
 
 

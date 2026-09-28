@@ -50,6 +50,20 @@ def test_completed_seed_requires_blind_prompt_done_and_train_membership():
     assert not seed_ok(row, ["x"])
 
 
+def test_visible_test_seed_requires_explicit_matching_train_allowlist():
+    command = "python -m pytest -q -x tests/test_public.py"
+    row = {"task_id": "x", "agent_status": "completed", "evaluation_verdict": "passed",
+           "messages": [{"role": "user", "content": json.dumps({"instance_id": "x", "allowed_test_command": command})},
+                        {"role": "assistant", "content": '{"done":true}'}]}
+    assert not seed_ok(row, ["x"])
+    assert not seed_ok(row, ["x"], visible_test_commands={"x": "python -m pytest -q tests/test_other.py"})
+    assert seed_ok(row, ["x"], visible_test_commands={"x": command})
+    assert not seed_ok(row, ["heldout"], visible_test_commands={"x": command})
+    row["messages"][0]["content"] = json.dumps({"instance_id": "x", "allowed_test_command": command,
+                                                  "test_patch": "SECRET"})
+    assert not seed_ok(row, ["x"], visible_test_commands={"x": command})
+
+
 def test_ready_collection_ignores_unwritten_or_incomplete_controls(tmp_path):
     quality = tmp_path / "quality"
     quality.mkdir()

@@ -10,6 +10,8 @@ from pathlib import PurePosixPath
 
 
 def validate_source_path(path: object) -> str:
+    if isinstance(path, str) and path.endswith("/"):
+        raise ValueError("path must name one source file, not a directory; list directory entries with a shell command")
     if (not isinstance(path, str) or not path or len(path) > 512
             or PurePosixPath(path).is_absolute() or "\\" in path or ":" in path
             or any(ord(c) < 32 for c in path)

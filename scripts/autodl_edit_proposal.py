@@ -15,6 +15,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from codeagentbench.adapters.model import LocalHFModel
+from codeagentbench.harness.context_history import prepare_context
 from codeagentbench.models import Candidate, ToolIntent
 from codeagentbench.sandbox.backends import selected_backend
 from codeagentbench.sandbox.executor import BashExecutor
@@ -115,7 +116,7 @@ def main() -> None:
               "prompt_policy": "native", "max_attempts": args.max_attempts, "issue_view": args.issue_view,
               "status": "rejected", "diff_present": False, "evaluation": None, "attempts": []}
     for attempt in range(args.max_attempts):
-        response = model.complete(messages, temperature=0)
+        response = model.complete(prepare_context(messages, model.prompt_policy), temperature=0)
         (output / f"model-{attempt + 1:02d}.json").write_text(json.dumps(asdict(response), indent=2))
         record = {"attempt": attempt + 1}
         try:

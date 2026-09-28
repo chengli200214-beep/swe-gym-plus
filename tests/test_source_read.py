@@ -5,6 +5,7 @@ import json
 import pytest
 
 from codeagentbench.adapters.action import parse_action
+from codeagentbench.adapters.source_read import validate_read
 from codeagentbench.adapters.model import ScriptedModel
 from codeagentbench.harness.context_history import recent_history
 from codeagentbench.harness.source_evidence import grounded_command, observe_source
@@ -29,12 +30,23 @@ def execute(path, action, observations):
     {"path": "value.py", "start_line": True, "end_line": 2},
     {"path": "value.py", "start_line": 0, "end_line": 2},
     {"path": "value.py", "start_line": 2, "end_line": 1},
-    {"path": "value.py", "start_line": 1, "end_line": 81},
     {"path": "value.py", "start_line": 1},
 ])
 def test_read_boundary_rejects_invalid_input(payload):
     with pytest.raises(ValueError):
         parse_action(json.dumps({"read": payload}))
+
+
+def test_oversized_read_request_is_safely_clamped(tmp_path):
+    (tmp_path / "value.py").write_text("".join(f"value_{i} = {i}\n" for i in range(1, 121)))
+    bounded = validate_read({"path": "value.py", "start_line": 1, "end_line": 141})
+    assert bounded.end_line == 80
+    observations = []
+    receipt = execute(tmp_path, {"read": bounded.to_dict()}, observations)
+    assert receipt.exit_code == 0, receipt.stderr
+    result = json.loads(receipt.stdout)
+    assert result["start_line"] == 1 and result["end_line"] == 80
+    assert result["next_line"] == 81 and len(result["text"].splitlines()) == 80
 
 
 def test_read_cannot_mix_with_another_action():

@@ -44,7 +44,20 @@ if proposal.get('expected_sha256') and hashlib.sha256(raw).hexdigest() != propos
     raise ValueError('source changed since read; read the file again before editing')
 count = text.count(proposal['before'])
 if count != 1:
-    raise ValueError('before must match exactly once in current source; observed ' + str(count))
+    detail = ''
+    if count > 1:
+        locations = []
+        cursor = 0
+        while len(locations) < 12:
+            offset = text.find(proposal['before'], cursor)
+            if offset < 0:
+                break
+            locations.append(str(text.count('\n', 0, offset) + 1))
+            cursor = offset + len(proposal['before'])
+        detail = '; matching 1-based lines: ' + ', '.join(locations)
+        if count > len(locations):
+            detail += ' (first 12 shown)'
+    raise ValueError('before must match exactly once in current source; observed ' + str(count) + detail)
 updated = text.replace(proposal['before'], proposal['after'], 1)
 if len(updated.encode('utf-8')) > 1048576:
     raise ValueError('updated file exceeds 1 MiB')

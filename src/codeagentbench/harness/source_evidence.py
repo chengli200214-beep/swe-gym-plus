@@ -17,7 +17,8 @@ def grounded_command(action: AgentAction, observations: list[dict]) -> str:
                              "preserve every leading space and newline from its decoded source stdout, "
                              "and use a small unique substring; no edit ran")
         raise ValueError("edit requires a successful read action of this exact path and before text; "
-                         "search with line numbers, then read actual implementation source before editing")
+                         "search a short literal identifier for a line number or directly read a known range, "
+                         "then anchor the edit to actual implementation source")
     return action.tool_command(expected_sha256=matching[-1]["sha256"])
 
 

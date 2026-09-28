@@ -152,6 +152,7 @@ class RunConfig:
     image: str = "local"
     seed: int = 0
     repository_inventory: bool = False
+    require_visible_test_before_done: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -265,8 +266,12 @@ class RunState:
     previous_signature: str = ""
     repeated: int = 0
     protocol_corrections: int = 0
+    protocol_correction_streak: int = 0
+    unverified_finish_rejections: int = 0
     failed_edits: int = 0
     source_observations: list[dict[str, Any]] = field(default_factory=list)
+    source_read_counts: dict[str, int] = field(default_factory=dict)
+    source_navigation_warnings: list[str] = field(default_factory=list)
     inventory_consumed: bool = False
 
     def to_dict(self) -> dict[str, Any]:

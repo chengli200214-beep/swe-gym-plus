@@ -14,6 +14,7 @@ from codeagentbench.sandbox.executor import BashExecutor
 from codeagentbench.sandbox.workspace import Workspace, WorkspaceManager
 from codeagentbench.storage.artifacts import ArtifactStore
 from codeagentbench.training.action_context import compact_context
+from codeagentbench.training.readiness import audit_readiness
 from scripts.prepare_aligned_sft import examples
 
 
@@ -74,6 +75,18 @@ def test_rejected_edit_does_not_touch_source(tmp_path, before, after, error):
     assert not list(tmp_path.glob(".agent-edit-*"))
 
 
+def test_non_unique_edit_reports_bounded_matching_line_numbers(tmp_path):
+    path = tmp_path / "value.py"
+    path.write_text("value = 1\nother = 0\nvalue = 1\n")
+    receipt = BashExecutor(tmp_path).execute(
+        ToolIntent("e", edit_command(TextEdit("value.py", "value = 1", "value = 2")), str(tmp_path))
+    )
+    assert receipt.exit_code != 0
+    assert "observed 2" in receipt.stderr
+    assert "matching 1-based lines: 1, 3" in receipt.stderr
+    assert path.read_text() == "value = 1\nother = 0\nvalue = 1\n"
+
+
 def test_quotes_unicode_and_newlines_are_data_not_executable_code(tmp_path):
     path = tmp_path / "value.py"
     path.write_bytes(b"value = 'old'\n")
@@ -97,16 +110,20 @@ def test_symlink_parent_rejected(tmp_path):
     assert (outside / "value.py").read_text() == "value = 1\n"
 
 
-def make_run(tmp_path, responses, *, steps=8, injector=None):
+def make_run(tmp_path, responses, *, steps=8, injector=None,
+             require_visible_test_before_done=False, allowed_test_command=""):
     source = tmp_path / "source"
     source.mkdir()
     (source / "value.py").write_text("value = 1\n")
     (source / "test_value.py").write_text("import unittest\nimport value\nclass TestValue(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(value.value, 2)\n")
-    task = TaskRecord("typed-edit-test", str(source), "local", "Change value to 2")
+    metadata = {"agent_test_command": allowed_test_command} if allowed_test_command else {}
+    task = TaskRecord("typed-edit-test", str(source), "local", "Change value to 2", metadata=metadata)
     workspace = WorkspaceManager(tmp_path / "workspaces").create(task, "edit-test")
     store = ArtifactStore(tmp_path / "artifacts")
     result = AgentRuntime(store).run(task, workspace, ScriptedModel(responses),
-        RunConfig(max_steps=steps, max_seconds=60), run_id="edit-test", failure_injector=injector)
+        RunConfig(max_steps=steps, max_seconds=60,
+                  require_visible_test_before_done=require_visible_test_before_done),
+        run_id="edit-test", failure_injector=injector)
     return result, workspace, store, task
 
 
@@ -122,23 +139,91 @@ def test_runtime_executes_edit_records_receipt_and_preserves_context(tmp_path, m
     row = {"task_id": "typed-edit-test", "run_id": result.run_id, "agent_status": "completed", "evaluation_verdict": "passed", "messages": [{"role": "user", "content": next(e["content"] for e in events if e["type"] == "prompt")}] + [{"role": "assistant", "content": e["content"]} for e in calls]}
     # A synthetic passed row is only a converter contract, not eligibility evidence.
     converted = examples(row, events, policy="recent-history-v3")
-    assert converted[1]["messages"][:-1] == recent_history(calls[1]["context_messages"])
+    assert converted[1]["messages"][:-1] == calls[1]["context_messages"]
 
 
 def test_format_retry_keeps_real_rejection_and_never_runs_truncated_command(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", "recent-history-v3")
-    result, workspace, _, _ = make_run(tmp_path, ['{"command":"echo truncated', read(), edit(), {"done": True}])
+    result, workspace, store, _ = make_run(tmp_path, ['{"command":"echo truncated', read(), edit(), {"done": True}])
     assert result.diff and result.state.protocol_corrections == 1
     assert (workspace.path / "value.py").read_text() == "value = 2\n"
     assert any(m["content"].startswith("Protocol result:") for m in result.state.messages)
     view = recent_history(result.state.messages[:-1])
     assert "echo truncated" in str(view) and "not valid JSON" in str(view)
+    events = [json.loads(s) for s in (store.run_dir(result.run_id) / "events.jsonl").read_text().splitlines()]
+    row = {"task_id": "typed-edit-test", "run_id": result.run_id,
+           "agent_status": "completed", "evaluation_verdict": "passed",
+           "messages": [{"role": "user", "content": next(e["content"] for e in events if e["type"] == "prompt")}] +
+           [{"role": "assistant", "content": e["content"]} for e in events if e["type"] == "model"]}
+    converted = examples(row, events, policy="recent-history-v3")
+    assert len(converted) == 3  # The rejected, unexecuted action is never a target.
+    assert "Protocol result:" in str(converted[0]["messages"])
+    assert '"executed": false' in str(converted[0]["messages"])
+    audit = audit_readiness(converted, expected_system_prompt=AgentRuntime._system_prompt(),
+                            expected_prompt_policy="recent-history-v3")
+    assert audit["recovery_examples"] == 1
+    assert audit["errors"] == {"missing_search_targets": 1}  # This one run is not a full corpus.
 
 
 def test_format_retry_and_edit_retry_are_bounded(tmp_path):
     result, workspace, _, _ = make_run(tmp_path, ["bad", "bad", edit()])
     assert "correction exhausted" in result.failure_reason and result.steps == 2
     assert not result.diff
+
+
+def test_protocol_correction_streak_resets_after_successful_tool_progress(tmp_path):
+    responses = ["bad", read(), "bad", read(), edit(),
+                 {"command": "python -m unittest -q"}, {"done": True}]
+    result, workspace, _, _ = make_run(tmp_path, responses)
+    assert result.diff and result.visible_test_passed and result.status == "completed"
+    assert result.state.protocol_corrections == 2
+    assert result.state.protocol_correction_streak == 0
+
+
+def test_unverified_done_requires_visible_test_before_completion(tmp_path):
+    result, _, _, _ = make_run(
+        tmp_path,
+        [read(), edit(), {"done": True}, {"command": "python -m unittest -q"}, {"done": True}],
+        require_visible_test_before_done=True, allowed_test_command="python -m unittest -q",
+    )
+    assert result.status == "completed" and result.visible_test_passed
+    assert result.state.unverified_finish_rejections == 1
+
+
+def test_visible_test_gate_requires_the_exact_allowed_command(tmp_path):
+    result, _, _, _ = make_run(
+        tmp_path,
+        [read(), edit(), {"command": "python -m unittest -q test_value"},
+         {"done": True}, {"command": "python -m unittest -q"}, {"done": True}],
+        require_visible_test_before_done=True, allowed_test_command="python -m unittest -q",
+    )
+    assert result.status == "completed" and result.visible_test_passed
+    assert result.state.unverified_finish_rejections == 1
+
+
+def test_missing_visible_test_command_does_not_block_independent_evaluation(tmp_path):
+    result, _, _, _ = make_run(
+        tmp_path, [read(), edit(), {"done": True}], require_visible_test_before_done=True,
+    )
+    assert result.status == "completed" and result.diff
+    assert not result.visible_test_passed
+    assert result.state.unverified_finish_rejections == 0
+
+
+def test_rejected_python_edit_feedback_is_actionable(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", "recent-history-v3")
+    result, _, store, _ = make_run(
+        tmp_path,
+        [read(), edit(after="value = ("), edit(), {"command": "python -m unittest -q"}, {"done": True}],
+    )
+    assert result.status == "completed" and result.diff
+    events = [json.loads(line) for line in
+              (store.run_dir(result.run_id) / "events.jsonl").read_text().splitlines()]
+    warnings = [message["content"] for event in events if event.get("type") == "model"
+                for message in event.get("context_messages", [])
+                if message["content"].startswith("Harness warning:")]
+    assert any("rejected before writing" in warning and "SyntaxError" in warning
+               for warning in warnings)
 
 
 def test_two_failed_edits_stop_before_third_write(tmp_path):

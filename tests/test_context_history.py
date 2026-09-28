@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from codeagentbench.adapters.model import LocalHFModel, ModelResponse
+from codeagentbench.adapters.model import ModelResponse, ScriptedModel
 from codeagentbench.harness.context_history import prepare_context, recent_history
 from codeagentbench.models import RunConfig, TaskRecord
 from codeagentbench.runtime import AgentRuntime
@@ -69,11 +69,9 @@ def test_missing_action_or_receipt_fields_fail_closed():
         recent_history(messages)
 
 
-def test_adapter_uses_shared_history_policy():
-    model = LocalHFModel.__new__(LocalHFModel)
-    model.prompt_policy = "recent-history-v3"
+def test_runtime_context_policy_dispatch():
     messages = transcript(3) + [{"role": "user", "content": WARNING}]
-    assert model._prepare_messages(messages) == recent_history(messages)
+    assert prepare_context(messages, "recent-history-v3") == recent_history(messages)
     with pytest.raises(ValueError, match="unknown"):
         prepare_context(messages, "typo")
 
@@ -89,7 +87,7 @@ def test_runtime_compression_preserves_repeat_warning_and_allows_new_action(tmp_
 
     class FeedbackModel:
         def complete(self, messages, **kwargs):
-            view = prepare_context(messages, policy)
+            view = messages
             if any(m["content"].startswith("Harness warning: this exact command") for m in view):
                 action = {"command": 'python -c "from pathlib import Path; Path(\'value.txt\').write_text(\'after\')"'}
             elif any("write_text" in m["content"] for m in view if m["role"] == "assistant"):
@@ -104,3 +102,26 @@ def test_runtime_compression_preserves_repeat_warning_and_allows_new_action(tmp_
     assert result.diff
     assert (workspace.path / "value.txt").read_text() == "after"
     assert result.status == "completed"
+
+
+def test_bounded_policy_selected_once_per_request_even_for_large_tool_output(tmp_path, monkeypatch):
+    import codeagentbench.runtime as runtime_module
+
+    monkeypatch.setenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", "recent-history-v3")
+    selected = []
+
+    def counted(messages, policy):
+        selected.append(policy)
+        return prepare_context(messages, policy)
+
+    monkeypatch.setattr(runtime_module, "prepare_context", counted)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "value.txt").write_text("unchanged")
+    task = TaskRecord("context-owner", str(source), "local", "inspect")
+    workspace = WorkspaceManager(tmp_path / "workspace").create(task, "owner")
+    model = ScriptedModel([{"command": 'python -c "print(\'x\'*18000)"'}, {"done": True}])
+    result = AgentRuntime(ArtifactStore(tmp_path / "artifacts")).run(
+        task, workspace, model, RunConfig(max_steps=2, max_seconds=60), run_id="owner")
+    assert result.status == "completed"
+    assert selected == ["recent-history-v3", "recent-history-v3"]

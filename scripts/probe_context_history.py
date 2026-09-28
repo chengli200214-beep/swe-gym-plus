@@ -49,7 +49,8 @@ def child(trace, argv):
     def observed(model, messages, **kwargs):
         nonlocal calls
         calls += 1
-        view = model._prepare_messages(messages)
+        # Runtime already selected this view; observe without transforming it.
+        view = [dict(message) for message in messages]
         latest_receipt = max((i for i, m in enumerate(view) if m["content"].startswith("Tool result:\n")), default=1)
         warnings = [m["content"] for m in view[latest_receipt + 1:]
                     if m["role"] == "user" and m["content"].startswith(("Harness warning:", "Harness checkpoint:"))]
