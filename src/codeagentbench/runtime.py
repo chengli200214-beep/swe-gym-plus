@@ -27,6 +27,9 @@ from codeagentbench.storage.artifacts import ArtifactStore
 
 
 _TEST_RUNNER = re.compile(r"(?:^|[;&|]\s*)(?:python(?:3)?\s+-m\s+)?(?:pytest|unittest|tox)(?:\s|$)", re.IGNORECASE)
+UNVERIFIED_FINISH_WARNING_PREFIX = (
+    "Harness warning: this patch has not passed a visible post-edit test. Do not finish yet;"
+)
 
 
 def _is_visible_test_run(command: str) -> bool:
@@ -386,7 +389,7 @@ class AgentRuntime:
                         messages.append({
                             "role": "user",
                             "content": (
-                                "Harness warning: this patch has not passed a visible post-edit test. Do not finish yet; "
+                                UNVERIFIED_FINISH_WARNING_PREFIX + " "
                                 "run the exact allowed_test_command from the task prompt with no pipe, redirection, "
                                 "suffix or other shell command. The command must exit successfully after the edit; "
                                 "inspect its real result, fix failures, and retest. "

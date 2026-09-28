@@ -196,6 +196,34 @@ def test_unverified_done_requires_visible_test_before_completion(tmp_path):
                for message in event.get("context_messages", []))
 
 
+def test_aligned_export_skips_only_a_recorded_rejected_done(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEAGENTBENCH_LOCAL_PROMPT_POLICY", "recent-history-v3")
+    result, _, store, _ = make_run(
+        tmp_path,
+        [read(), edit(), {"done": True}, {"command": "python -m unittest -q"}, {"done": True}],
+        require_visible_test_before_done=True, allowed_test_command="python -m unittest -q",
+    )
+    assert result.status == "completed" and result.visible_test_passed
+    events = [json.loads(line) for line in
+              (store.run_dir(result.run_id) / "events.jsonl").read_text().splitlines()]
+    models = [event for event in events if event["type"] == "model"]
+    row = {"task_id": result.state.task_id, "run_id": result.run_id,
+           "agent_status": "completed", "evaluation_verdict": "passed",
+           "messages": [{"role": "user", "content": next(event["content"] for event in events
+                                                    if event["type"] == "prompt")}] +
+                       [{"role": "assistant", "content": event["content"]} for event in models]}
+    converted = examples(row, events, policy="recent-history-v3")
+    assert len(converted) == 4  # read, edit, real test, accepted done
+    assert sum(json.loads(example["messages"][-1]["content"])["done"] for example in converted) == 1
+    assert json.loads(converted[-2]["messages"][-1]["content"])["command"] == "python -m unittest -q"
+
+    tampered = json.loads(json.dumps(events))
+    following = [event for event in tampered if event["type"] == "model"][3]
+    following["context_messages"][-1]["content"] = "unverified finish maybe rejected"
+    with pytest.raises(ValueError, match="verified finish rejection"):
+        examples(row, tampered, policy="recent-history-v3")
+
+
 def test_piped_test_cannot_certify_visible_pass():
     assert _is_visible_test_run("python -m pytest -q tests/test_public.py")
     assert not _is_visible_test_run("python -m pytest -q tests/test_public.py | tail -20")

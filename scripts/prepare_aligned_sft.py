@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import shlex
 
-from codeagentbench.runtime import AgentRuntime
+from codeagentbench.runtime import AgentRuntime, UNVERIFIED_FINISH_WARNING_PREFIX
 from codeagentbench.adapters.action import parse_action
 from codeagentbench.training.action_context import POLICY, encode_next_action
 from codeagentbench.harness.context_history import POLICIES
@@ -17,6 +17,25 @@ from codeagentbench.harness.tool_observation import tool_observation
 from codeagentbench.adapters.repository_inventory import inventory_command, inventory_packet
 from codeagentbench.tasks.manifest import load_manifest
 from scripts.accelerate_campaign import seed_ok
+
+
+def _observed_finish_rejection(previous_context, next_event, prompt):
+    """Accept only the actual next model input as evidence of a rejected done.
+
+    Older runs did not journal a separate completion-rejection event. Their
+    recorded next input still contains the runner's exact warning. We do not
+    infer a rejected finish merely because another model action exists.
+    """
+    allowed = json.loads(prompt).get("allowed_test_command")
+    recorded = next_event.get("context_messages")
+    if not isinstance(allowed, str) or not allowed or not isinstance(recorded, list) or not recorded:
+        return False
+    warning = recorded[-1]
+    return (isinstance(warning, dict) and warning.get("role") == "user"
+            and isinstance(warning.get("content"), str)
+            and warning["content"].startswith(UNVERIFIED_FINISH_WARNING_PREFIX)
+            and warning["content"].endswith("Exact command: " + allowed)
+            and warning not in previous_context)
 
 
 def examples(row, events, *, policy=POLICY):
@@ -37,16 +56,17 @@ def examples(row, events, *, policy=POLICY):
             raise ValueError("initial inventory disagrees with the real observation")
     elif inventories:
         raise ValueError("real inventory is absent from the initial model context")
-    output, pending, observations, terminated = [], None, [], False
+    output, pending, observations = [], None, []
     model_texts = [e["content"] for e in events if e.get("type") == "model"]
     if model_texts != [m["content"] for m in row["messages"] if m["role"] == "assistant"]:
         raise ValueError("source model turns and events disagree")
     for event in events:
         if event.get("type") == "model":
-            if terminated:
-                raise ValueError("model action follows verified termination")
             if pending is not None:
-                raise ValueError("model action has no real tool receipt or rejection")
+                if (pending[0] is None or not pending[0].done
+                        or not _observed_finish_rejection(pending[1], event, prompts[0])):
+                    raise ValueError("model action has no real tool receipt or verified finish rejection")
+                pending = None  # The earlier done was rejected; never supervise it.
             if event.get("context_contract") != "runtime-once-v1":
                 raise ValueError("source lacks the runtime-once context contract")
             if event.get("prompt_policy") != policy:
@@ -63,10 +83,6 @@ def examples(row, events, *, policy=POLICY):
             except ValueError:
                 action = None  # A real protocol_rejection must follow; never supervise malformed output.
             pending = (action, [dict(m) for m in recorded])
-            if action is not None and action.done:
-                output.append(_example(row, policy, pending[1], action, len(output)))
-                pending = None
-                terminated = True
         elif event.get("type") == "tool":
             if pending is None or pending[0] is None or not pending[0].executable:
                 raise ValueError("tool receipt has no executable model action")
@@ -99,8 +115,9 @@ def examples(row, events, *, policy=POLICY):
             if kind == "source_navigation_blocked" and (action is None or action.read is None):
                 raise ValueError("source navigation block has no read action")
             pending = None
-    if pending is not None or not terminated or not output:
+    if pending is None or pending[0] is None or not pending[0].done:
         raise ValueError("source lacks verified termination")
+    output.append(_example(row, policy, pending[1], pending[0], len(output)))
     return output
 
 
