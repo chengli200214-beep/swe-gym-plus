@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from codeagentbench.training.sft_config import SFTConfig, build_config
-from codeagentbench.training.sft_sampling import action_weight
+from codeagentbench.training.sft_sampling import action_weight, target_kind
 
 IGNORE_INDEX = -100
 
@@ -160,9 +160,9 @@ def dry_run(config: SFTConfig) -> int:
     """Validate config and data without touching a GPU or the hub."""
 
     records = load_records(config.train_file)
-    if config.done_sampling_weight > 1:
+    if config.done_sampling_weight > 1 or config.typed_action_sampling_weight > 1:
         for record in records:
-            action_weight(record, config.done_sampling_weight)
+            action_weight(record, config.done_sampling_weight, config.typed_action_sampling_weight)
     assistant_turns = 0
     for record in records:
         assistant_turns += sum(1 for m in record["messages"] if m.get("role") == "assistant")
@@ -182,6 +182,7 @@ def dry_run(config: SFTConfig) -> int:
         "per_device_batch_size": config.per_device_batch_size,
         "gradient_accumulation_steps": config.gradient_accumulation_steps,
         "done_sampling_weight": config.done_sampling_weight,
+        "typed_action_sampling_weight": config.typed_action_sampling_weight,
         "lora": {"r": config.lora_rank, "alpha": config.lora_alpha, "dropout": config.lora_dropout},
         "load_in_4bit": config.load_in_4bit,
         "quant_type": config.bnb_quant_type,
@@ -289,8 +290,9 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
         example = encode_example(tokenizer, normalised, max_seq_len)
         if example is not None:
             encoded.append(example)
-            if config.done_sampling_weight > 1:
-                sampling_weights.append(action_weight(record, config.done_sampling_weight))
+            if config.done_sampling_weight > 1 or config.typed_action_sampling_weight > 1:
+                sampling_weights.append(action_weight(
+                    record, config.done_sampling_weight, config.typed_action_sampling_weight))
         else:
             dropped += 1
     if dropped:
@@ -373,7 +375,9 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
         "sampling": {
             "mode": "weighted_with_replacement" if sampling_weights else "default",
             "done_weight": config.done_sampling_weight,
-            "source_done_records": sum(weight > 1 for weight in sampling_weights) if sampling_weights else None,
+            "typed_action_weight": config.typed_action_sampling_weight,
+            "source_done_records": sum(target_kind(record) == "done" for record in records) if sampling_weights else None,
+            "source_typed_records": sum(target_kind(record) in {"edit", "read", "search"} for record in records) if sampling_weights else None,
             "draws_per_epoch": len(encoded),
         },
     }
@@ -385,9 +389,9 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
 
 def train(config: SFTConfig) -> int:
     records = load_records(config.train_file)
-    if config.done_sampling_weight > 1:
+    if config.done_sampling_weight > 1 or config.typed_action_sampling_weight > 1:
         for record in records:
-            action_weight(record, config.done_sampling_weight)
+            action_weight(record, config.done_sampling_weight, config.typed_action_sampling_weight)
     torch = _require_gpu()
     random.seed(config.seed)
     torch.manual_seed(config.seed)

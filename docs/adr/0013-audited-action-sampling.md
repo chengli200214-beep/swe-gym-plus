@@ -40,3 +40,22 @@ than six unique train tasks or a repair-rate improvement from a lower loss.
 Rollback is setting `done_sampling_weight: 1` or using the prior checkpoint.
 Remove the feature if it fails to change the stopping failure mode, or if a
 larger diverse train set makes weighting unnecessary.
+
+## Follow-up: typed source-action weighting
+
+The weight-four finish variant selected `done` on 5/6 recorded finish contexts,
+but still made **54 shell commands and no typed actions** across four disjoint
+development runs; all four had no patch and failed independent evaluation.
+The edit tool requires a real versioned typed-read receipt, so shell `cat` or
+`sed` output alone does not establish edit evidence. A generic one-step
+reminder on those development contexts still yielded four shell actions.
+
+The same audited, unique source file may now set
+`typed_action_sampling_weight >= 1` for real `search`, `read` and `edit`
+targets. `command` retains weight one; `done` keeps its independent weight.
+Both weights are finite and validated before GPU allocation. This follow-up
+holds `done_sampling_weight: 4` and changes only typed action exposure from
+one to four. It does **not** add trajectories, change prompts, or treat
+sampled draws as independent tasks. The source kind counts and both weights
+are included in training metrics. Re-evaluate stopping, editing and
+autonomous repair separately; no typed-action or repair gain is presumed.

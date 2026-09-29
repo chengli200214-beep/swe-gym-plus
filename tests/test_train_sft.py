@@ -87,6 +87,15 @@ def test_build_config_rejects_invalid_done_sampling_weight(tmp_path: Path, weigh
         train_sft.build_config(config_file)
 
 
+@pytest.mark.parametrize("weight", ["0", "-1", ".nan", ".inf"])
+def test_build_config_rejects_invalid_typed_action_weight(tmp_path: Path, weight: str) -> None:
+    config_file = tmp_path / "sft.yaml"
+    config_file.write_text(f"train_file: train.jsonl\ntyped_action_sampling_weight: {weight}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="typed_action_sampling_weight"):
+        train_sft.build_config(config_file)
+
+
 def test_done_weight_uses_real_aligned_targets_without_creating_records() -> None:
     edit = {"next_action_only_loss": True, "messages": [{"role": "assistant", "content":
             '{"edit":{"path":"x.py","before":"a","after":"b"},"done":false}'}]}
@@ -99,11 +108,38 @@ def test_done_weight_uses_real_aligned_targets_without_creating_records() -> Non
         action_weight({"messages": done["messages"]}, 4.0)
 
 
+def test_typed_weight_changes_exposure_not_source_record_count() -> None:
+    targets = [
+        '{"command":"git diff","done":false}',
+        '{"search":{"path":"moto/x.py","query":"target"},"done":false}',
+        '{"read":{"path":"moto/x.py","start_line":1,"end_line":20},"done":false}',
+        '{"edit":{"path":"moto/x.py","before":"a","after":"b"},"done":false}',
+        '{"done":true,"message":"finished"}',
+    ]
+    records = [{"next_action_only_loss": True,
+                "messages": [{"role": "assistant", "content": target}]} for target in targets]
+    assert [action_weight(row, 4.0, 4.0) for row in records] == [1.0, 4.0, 4.0, 4.0, 4.0]
+    assert [action_weight(row, 4.0) for row in records] == [1.0, 1.0, 1.0, 1.0, 4.0]
+    assert len(records) == 5
+
+
 def test_weighted_training_rejects_unaudited_data_before_gpu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = tmp_path / "train.jsonl"
     data.write_text('{"messages":[{"role":"assistant","content":"{\\"done\\":true}"}]}\n', encoding="utf-8")
     config_file = tmp_path / "sft.yaml"
     config_file.write_text("train_file: train.jsonl\ndone_sampling_weight: 4\n", encoding="utf-8")
+    config = train_sft.build_config(config_file)
+    monkeypatch.setattr(train_sft, "_require_gpu", lambda: pytest.fail("GPU must not be touched"))
+
+    with pytest.raises(ValueError, match="audited next-action"):
+        train_sft.train(config)
+
+
+def test_typed_weighting_rejects_unaudited_data_before_gpu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = tmp_path / "train.jsonl"
+    data.write_text('{"messages":[{"role":"assistant","content":"{\\"done\\":true}"}]}\n', encoding="utf-8")
+    config_file = tmp_path / "sft.yaml"
+    config_file.write_text("train_file: train.jsonl\ntyped_action_sampling_weight: 4\n", encoding="utf-8")
     config = train_sft.build_config(config_file)
     monkeypatch.setattr(train_sft, "_require_gpu", lambda: pytest.fail("GPU must not be touched"))
 
