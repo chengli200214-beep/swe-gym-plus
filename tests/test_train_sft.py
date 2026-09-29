@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from codeagentbench import train_sft
+from codeagentbench.training.sft_sampling import action_weight
 
 IGNORE = train_sft.IGNORE_INDEX
 
@@ -75,6 +76,39 @@ def test_build_config_requires_train_file(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="train_file"):
         train_sft.build_config(config_file)
+
+
+@pytest.mark.parametrize("weight", ["0", "-1", ".nan", ".inf"])
+def test_build_config_rejects_invalid_done_sampling_weight(tmp_path: Path, weight: str) -> None:
+    config_file = tmp_path / "sft.yaml"
+    config_file.write_text(f"train_file: train.jsonl\ndone_sampling_weight: {weight}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="done_sampling_weight"):
+        train_sft.build_config(config_file)
+
+
+def test_done_weight_uses_real_aligned_targets_without_creating_records() -> None:
+    edit = {"next_action_only_loss": True, "messages": [{"role": "assistant", "content":
+            '{"edit":{"path":"x.py","before":"a","after":"b"},"done":false}'}]}
+    done = {"next_action_only_loss": True, "messages": [{"role": "assistant", "content":
+            '{"done":true,"message":"Finished"}'}]}
+
+    assert [action_weight(row, 4.0) for row in [edit, done]] == [1.0, 4.0]
+    assert len([edit, done]) == 2
+    with pytest.raises(ValueError, match="audited next-action"):
+        action_weight({"messages": done["messages"]}, 4.0)
+
+
+def test_weighted_training_rejects_unaudited_data_before_gpu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = tmp_path / "train.jsonl"
+    data.write_text('{"messages":[{"role":"assistant","content":"{\\"done\\":true}"}]}\n', encoding="utf-8")
+    config_file = tmp_path / "sft.yaml"
+    config_file.write_text("train_file: train.jsonl\ndone_sampling_weight: 4\n", encoding="utf-8")
+    config = train_sft.build_config(config_file)
+    monkeypatch.setattr(train_sft, "_require_gpu", lambda: pytest.fail("GPU must not be touched"))
+
+    with pytest.raises(ValueError, match="audited next-action"):
+        train_sft.train(config)
 
 
 def test_tool_role_is_mapped_to_a_template_safe_role() -> None:
