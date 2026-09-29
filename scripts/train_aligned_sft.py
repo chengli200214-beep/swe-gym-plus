@@ -18,11 +18,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--train-file", type=Path)
+    parser.add_argument("--typed-action-sampling-weight", type=float)
     args, _ = parser.parse_known_args(argv)
     try:
         from codeagentbench.runtime import AgentRuntime
 
         overrides = {"train_file": str(args.train_file.resolve())} if args.train_file else {}
+        if args.typed_action_sampling_weight is not None:
+            overrides["typed_action_sampling_weight"] = args.typed_action_sampling_weight
         config = train_sft.build_config(args.config.resolve(), overrides)
         system = AgentRuntime._system_prompt()
         report = audit_readiness(train_sft.load_records(config.train_file),

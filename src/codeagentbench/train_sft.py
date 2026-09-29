@@ -447,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--resume-from-checkpoint", default=None)
     parser.add_argument("--train-file", type=Path)
+    parser.add_argument("--typed-action-sampling-weight", type=float)
     args = parser.parse_args(argv)
 
     overrides: dict[str, Any] = {}
@@ -459,6 +460,8 @@ def main(argv: list[str] | None = None) -> int:
         overrides["output_dir"] = str(args.output_dir.resolve())
     if args.train_file:
         overrides["train_file"] = str(args.train_file.resolve())
+    if args.typed_action_sampling_weight is not None:
+        overrides["typed_action_sampling_weight"] = args.typed_action_sampling_weight
     if args.resume_from_checkpoint:
         overrides["resume_from_checkpoint"] = args.resume_from_checkpoint
 

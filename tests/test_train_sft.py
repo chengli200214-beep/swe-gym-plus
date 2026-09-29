@@ -96,6 +96,14 @@ def test_build_config_rejects_invalid_typed_action_weight(tmp_path: Path, weight
         train_sft.build_config(config_file)
 
 
+def test_build_config_accepts_typed_action_override(tmp_path: Path) -> None:
+    config_file = tmp_path / "sft.yaml"
+    config_file.write_text("train_file: train.jsonl\ndone_sampling_weight: 4\n", encoding="utf-8")
+    config = train_sft.build_config(config_file, {"typed_action_sampling_weight": 4.0})
+    assert config.done_sampling_weight == 4.0
+    assert config.typed_action_sampling_weight == 4.0
+
+
 def test_done_weight_uses_real_aligned_targets_without_creating_records() -> None:
     edit = {"next_action_only_loss": True, "messages": [{"role": "assistant", "content":
             '{"edit":{"path":"x.py","before":"a","after":"b"},"done":false}'}]}
