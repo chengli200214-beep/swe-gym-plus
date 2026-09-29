@@ -5,6 +5,30 @@ working engineering loop, but the current 7B model/training line is **not yet
 complete**. Private event journals, patches, LoRA adapters, and API credentials are
 not included in this public-tree report.
 
+## Later same-day update
+
+The table and bounded local diagnostic below describe the **earlier** state,
+before train-only teacher collection. They are retained to show why the later
+data were needed; they are not the current training status. The current ledger
+is [TRAIN_ONLY_ALIGNED_SFT_20260929.md](TRAIN_ONLY_ALIGNED_SFT_20260929.md).
+Six distinct, independently passed `train` tasks yielded 46 audited typed-action
+records. A first local 7B LoRA completed, and a frozen disjoint four-task
+development comparison was Base **0/4**, SFT **0/4**, with no patches from
+either model. An in-sample replay found that SFT chose `done` on **0/6**
+recorded finish contexts versus Base **6/6**. A seeded weighted-sampling
+follow-up was trained on the same 46 unique records; its autonomous outcome
+is also **0/4** on those development tasks, with no patches. The weighted
+model's in-sample finish choice improved to 5/6, but 54/54 new-task actions
+were shell commands, so the exploration-to-edit transition remains unsolved.
+A third LoRA gave the same 46 records more typed-action sampling exposure:
+the four dev runs now include eight successful typed reads, two successful
+edits and one nonempty patch, but independent evaluation is still **0/4**.
+The current bottleneck is moving from source observation to a correct,
+tested and normally completed patch. None of this is a sealed improvement
+claim.
+
+## Earlier snapshot (retained for chronology)
+
 | Gate | Evidence | Status |
 |---|---|---|
 | Isolated execution and independent evaluation | AutoDL NsJail controls and frozen three-task reports; local regression suite | Implemented and exercised |
@@ -14,9 +38,9 @@ not included in this public-tree report.
 | New LoRA and fair Base/SFT comparison | No qualifying current-protocol dataset, therefore no new aligned LoRA or sealed paired comparison | **Not started** |
 | Public result claim | No sealed SWE-Gym repair-rate improvement established | **Do not claim improvement** |
 
-## Bounded train-only collection on the current instance
+## Earlier credential-free train-only diagnostics
 
-No DeepSeek API was used. All examples below are train-split diagnostics with
+No DeepSeek API was used **in this earlier phase**. All examples below are train-split diagnostics with
 the same local Qwen2.5-Coder-7B-Instruct and an isolated agent/evaluator.
 
 - `getmoto__moto-5699` passed admission (unfixed fails, official patch passes).
@@ -72,12 +96,14 @@ reinterpret a formal pass after the failed run as a source `done` action.
    typed actions**, retaining actual tool receipts, a post-edit visible test,
    a model-emitted `done`, a normally completed run and an independent pass.
    Keep candidate-patch-only runs separate. Do not invent missing finish or
-   test actions. Any paid teacher collection requires a separate decision.
-2. Audit the new source events at task/run/action grain. The training script's
-   readiness gate must pass before allocating GPU for another 7B LoRA.
-3. Run a bounded learnability check, then one frozen new LoRA and paired
-   Base/SFT independent evaluation on untouched holdout tasks. Report a
-   negative result if that is what the data show.
+   test actions. The later six-task teacher collection was separately authorized
+   and restricted to the train split.
+2. Preserve the task/run/action-level audit and explicit unique-record counts
+   for any additional source trajectories; keep the readiness gate before GPU.
+3. The weighted follow-up and frozen development comparison are recorded in
+   the current ledger. Diagnose the new-task exploration-to-edit failure and
+   collect only train-split data needed to test that hypothesis. Keep a separate
+   untouched partition for any final comparison; report negative results too.
 4. Finish the reproducibility handoff and security scope statement. The local
    UI is a private, unauthenticated demo and must not be exposed publicly as a
    multi-user service without authentication and authorization work.
