@@ -169,3 +169,44 @@ longer directly resumable, but the raw event journals, reports, aligned data,
 LoRA checkpoints and their provenance remain in the private experiment root.
 External backup was deferred by the user, so those assets still have
 single-instance risk. The AutoDL instance remains billable while running.
+
+## Seven-task source and fourth 7B adapter
+
+Three further tasks (`5155`, `5119`, `6804`) passed credential-free unfixed/gold
+admission and were each collected once through the train-only API route. The
+paid rollout received a **blind train manifest** without EvalSpec; a separate
+process without the credential used the full manifest for independent judging.
+`5155` made one real edit and a nonempty candidate patch, but exhausted 24
+steps without a passing visible test or normal finish, and its formal verdict
+was failed. `6804` made no patch. Both remain private failure traces, not SFT
+sources. `5119` normally finished after a real edit and post-edit visible
+test; the separate formal evaluation passed. Its premature attempted finish
+was rejected by the runner and is not a supervised finish target.
+
+The seven distinct qualified tasks yielded **57 unique next-action records**:
+30 commands, 11 reads, 7 edits, 7 accepted finishes and 2 searches. The new
+task contributed 11 records, not 11 new tasks. The seven-task aligned source
+has SHA256 `778daff1e0607d13c8574ac718b98ab6f4fc77768e4801c472b02a0638824d6c4`;
+its audit verified real receipts, train-only identity, zero rejected or
+truncated examples, and a maximum encoded length of 5,954 below the 6,144
+training bound. No dev/eval prompt was sent to DeepSeek.
+
+Keeping the six-task configuration, seed, BF16 LoRA and typed/finish weights at
+four, the fourth adapter trained on 57/57 records for 57 optimizer steps with
+zero training truncation. Loss was about 0.4471, not a repair score. In-sample
+replay chose `done` for 7/7 accepted finish contexts and `edit` for 5/7 edit
+contexts. On the *same repeatedly inspected* four-task development panel it
+produced **no patch and 0/4 independent passes**. All four stopped after
+search/read loops; the prior six-task typed-weight adapter had produced one
+nonempty but failing patch and also scored 0/4. This is a regression in patch
+production, not evidence of better repair.
+
+The replacement sampler's deterministic schedule explains a possible source
+of instability: the six-task run's configured weights/seed select 14 edit and
+7 read draws, while the seven-task schedule selects 9 edit and 19 read draws.
+Only 22/46 and 29/57 unique source records, respectively, appear in those
+one-epoch schedules. These are reconstructed schedules, not a proven causal
+explanation of model behavior. ADR 0013 records an opt-in full-coverage plus
+weighted schedule so every unique source action is seen at least once; it
+doubles steps and must be evaluated as a distinct training treatment. Reusing
+this small development panel cannot establish a sealed improvement.

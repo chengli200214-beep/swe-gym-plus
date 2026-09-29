@@ -32,6 +32,7 @@ DEFAULTS: dict[str, Any] = {
     "save_total_limit": 3,
     "done_sampling_weight": 1.0,
     "typed_action_sampling_weight": 1.0,
+    "sampling_mode": "weighted_with_replacement",
     "oom_ladder": [
         {"max_seq_len": 2048, "gradient_accumulation_steps": 8},
         {"max_seq_len": 1024, "gradient_accumulation_steps": 16},
@@ -64,6 +65,7 @@ class SFTConfig:
     save_total_limit: int
     done_sampling_weight: float = 1.0
     typed_action_sampling_weight: float = 1.0
+    sampling_mode: str = "weighted_with_replacement"
     oom_ladder: list[dict[str, int]] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -91,6 +93,11 @@ def build_config(config_path: Path, overrides: dict[str, Any] | None = None) -> 
     typed_weight = float(raw["typed_action_sampling_weight"])
     if not math.isfinite(typed_weight) or typed_weight < 1:
         raise ValueError("typed_action_sampling_weight must be finite and at least 1")
+    sampling_mode = str(raw["sampling_mode"])
+    if sampling_mode not in {"weighted_with_replacement", "coverage_plus_weighted"}:
+        raise ValueError("unsupported sampling_mode")
+    if sampling_mode == "coverage_plus_weighted" and weight == typed_weight == 1:
+        raise ValueError("coverage_plus_weighted requires a non-default action weight")
     base = config_path.parent
     train_file = Path(raw["train_file"])
     if not train_file.is_absolute():
@@ -127,6 +134,7 @@ def build_config(config_path: Path, overrides: dict[str, Any] | None = None) -> 
         save_total_limit=int(raw["save_total_limit"]),
         done_sampling_weight=weight,
         typed_action_sampling_weight=typed_weight,
+        sampling_mode=sampling_mode,
         oom_ladder=[dict(rung) for rung in raw.get("oom_ladder") or []],
         raw=raw,
     )

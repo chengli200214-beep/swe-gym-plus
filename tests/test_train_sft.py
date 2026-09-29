@@ -14,7 +14,9 @@ from pathlib import Path
 import pytest
 
 from codeagentbench import train_sft
-from codeagentbench.training.sft_sampling import action_weight
+from codeagentbench.training.sft_sampling import (
+    FixedIndexSampler, action_weight, covered_weighted_indices, coverage_receipt,
+)
 
 IGNORE = train_sft.IGNORE_INDEX
 
@@ -102,6 +104,37 @@ def test_build_config_accepts_typed_action_override(tmp_path: Path) -> None:
     config = train_sft.build_config(config_file, {"typed_action_sampling_weight": 4.0})
     assert config.done_sampling_weight == 4.0
     assert config.typed_action_sampling_weight == 4.0
+
+
+def test_coverage_sampling_preserves_each_real_record_and_is_seeded() -> None:
+    weights = [1.0, 4.0, 4.0, 4.0]
+    schedule = covered_weighted_indices(weights, 42)
+    assert schedule == covered_weighted_indices(weights, 42)
+    assert len(schedule) == 2 * len(weights)
+    assert set(schedule) == set(range(len(weights)))
+    assert list(FixedIndexSampler(schedule)) == list(FixedIndexSampler(schedule))
+    receipt = coverage_receipt(schedule, ["command", "read", "edit", "done"])
+    assert receipt["unique_source_records_covered"] == 4
+    assert sum(receipt["drawn_action_kinds"].values()) == 8
+    assert len(receipt["schedule_sha256"]) == 64
+
+
+@pytest.mark.parametrize("weights", [[], [0.0], [float("nan")], [float("inf")]])
+def test_coverage_sampling_rejects_invalid_weights(weights: list[float]) -> None:
+    with pytest.raises(ValueError, match="positive finite"):
+        covered_weighted_indices(weights, 42)
+
+
+def test_coverage_mode_requires_action_weight_and_rejects_unknown_mode(tmp_path: Path) -> None:
+    config_file = tmp_path / "sft.yaml"
+    config_file.write_text("train_file: train.jsonl\nsampling_mode: coverage_plus_weighted\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="non-default action weight"):
+        train_sft.build_config(config_file)
+    config_file.write_text("train_file: train.jsonl\ndone_sampling_weight: 4\nsampling_mode: coverage_plus_weighted\n", encoding="utf-8")
+    assert train_sft.build_config(config_file).sampling_mode == "coverage_plus_weighted"
+    config_file.write_text("train_file: train.jsonl\nsampling_mode: unknown\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="sampling_mode"):
+        train_sft.build_config(config_file)
 
 
 def test_done_weight_uses_real_aligned_targets_without_creating_records() -> None:

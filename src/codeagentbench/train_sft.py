@@ -31,7 +31,9 @@ from pathlib import Path
 from typing import Any
 
 from codeagentbench.training.sft_config import SFTConfig, build_config
-from codeagentbench.training.sft_sampling import action_weight, target_kind
+from codeagentbench.training.sft_sampling import (
+    FixedIndexSampler, action_weight, covered_weighted_indices, coverage_receipt, target_kind,
+)
 
 IGNORE_INDEX = -100
 
@@ -183,6 +185,7 @@ def dry_run(config: SFTConfig) -> int:
         "gradient_accumulation_steps": config.gradient_accumulation_steps,
         "done_sampling_weight": config.done_sampling_weight,
         "typed_action_sampling_weight": config.typed_action_sampling_weight,
+        "sampling_mode": config.sampling_mode,
         "lora": {"r": config.lora_rank, "alpha": config.lora_alpha, "dropout": config.lora_dropout},
         "load_in_4bit": config.load_in_4bit,
         "quant_type": config.bnb_quant_type,
@@ -278,6 +281,7 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
 
     encoded = []
     sampling_weights = []
+    encoded_kinds = []
     dropped = 0
     truncated = 0
     for record in records:
@@ -293,6 +297,7 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
             if config.done_sampling_weight > 1 or config.typed_action_sampling_weight > 1:
                 sampling_weights.append(action_weight(
                     record, config.done_sampling_weight, config.typed_action_sampling_weight))
+                encoded_kinds.append(target_kind(record))
         else:
             dropped += 1
     if dropped:
@@ -335,11 +340,15 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
         training_kwargs["warmup_steps"] = 0
     arguments = TrainingArguments(**training_kwargs)
     trainer_class = Trainer
+    coverage_indices = (covered_weighted_indices(sampling_weights, config.seed)
+                        if sampling_weights and config.sampling_mode == "coverage_plus_weighted" else None)
     if sampling_weights:
         # The source file remains unique and readiness-audited. A seeded,
         # with-replacement sampler changes only training exposure frequency.
         class WeightedActionTrainer(Trainer):
             def _get_train_sampler(self, train_dataset=None):
+                if coverage_indices is not None:
+                    return FixedIndexSampler(coverage_indices)
                 generator = torch.Generator().manual_seed(config.seed)
                 return torch.utils.data.WeightedRandomSampler(
                     sampling_weights, num_samples=len(sampling_weights),
@@ -373,12 +382,13 @@ def _attempt(config: SFTConfig, torch: Any, max_seq_len: int, grad_accum: int, r
         "trainer_metrics": trainer.state.log_history,
         "global_step": trainer.state.global_step,
         "sampling": {
-            "mode": "weighted_with_replacement" if sampling_weights else "default",
+            "mode": config.sampling_mode if sampling_weights else "default",
             "done_weight": config.done_sampling_weight,
             "typed_action_weight": config.typed_action_sampling_weight,
             "source_done_records": sum(target_kind(record) == "done" for record in records) if sampling_weights else None,
             "source_typed_records": sum(target_kind(record) in {"edit", "read", "search"} for record in records) if sampling_weights else None,
-            "draws_per_epoch": len(encoded),
+            "draws_per_epoch": len(coverage_indices) if coverage_indices is not None else len(encoded),
+            **(coverage_receipt(coverage_indices, encoded_kinds) if coverage_indices is not None else {}),
         },
     }
     (config.output_dir / "train_metrics.json").write_text(
@@ -448,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume-from-checkpoint", default=None)
     parser.add_argument("--train-file", type=Path)
     parser.add_argument("--typed-action-sampling-weight", type=float)
+    parser.add_argument("--sampling-mode", choices=("weighted_with_replacement", "coverage_plus_weighted"))
     args = parser.parse_args(argv)
 
     overrides: dict[str, Any] = {}
@@ -462,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
         overrides["train_file"] = str(args.train_file.resolve())
     if args.typed_action_sampling_weight is not None:
         overrides["typed_action_sampling_weight"] = args.typed_action_sampling_weight
+    if args.sampling_mode is not None:
+        overrides["sampling_mode"] = args.sampling_mode
     if args.resume_from_checkpoint:
         overrides["resume_from_checkpoint"] = args.resume_from_checkpoint
 

@@ -59,3 +59,30 @@ one to four. It does **not** add trajectories, change prompts, or treat
 sampled draws as independent tasks. The source kind counts and both weights
 are included in training metrics. Re-evaluate stopping, editing and
 autonomous repair separately; no typed-action or repair gain is presumed.
+
+## Follow-up: preserve unique-action coverage in tiny cohorts
+
+The seven-task audit added one independently passed task and eleven real
+next-action records. The same weight-four sampler and seed generated a
+replacement schedule with **9 edit draws from 7 unique edit records**, versus
+**14 draws from 6 edit records** in the six-task schedule. Its read draws rose
+from 7 to 19. These are reconstructed sampler schedules, not additional
+trajectories or proof that sampling alone caused the development result. The
+seven-task adapter nonetheless regressed from a nonempty patch on one of four
+development tasks to no patch on all four; independent passes stayed 0/4.
+
+For a small audited cohort, opt in to `sampling_mode: coverage_plus_weighted`.
+Each encoded source record appears exactly once per epoch, followed by the
+same number of seeded weighted draws; the combined schedule is shuffled. The
+trainer records its action-kind draw counts, complete unique-record coverage
+and schedule hash. This doubles optimizer steps for a one-epoch run, so it is
+**not** an otherwise identical training comparison. The prior
+`weighted_with_replacement` behavior remains the default for historical
+reproducibility. No dev/eval trace enters the training source, and no result
+on the repeatedly inspected dev panel can be called a sealed gain.
+
+Revert by omitting the sampling-mode option or using the earlier adapter.
+Remove this small-cohort mechanism when a larger, diverse source set makes
+per-action coverage natural or if controlled validation shows no useful
+behavioral effect. More train examples, not repeated weighting of the same
+seven tasks, remain the primary route to generalization.
