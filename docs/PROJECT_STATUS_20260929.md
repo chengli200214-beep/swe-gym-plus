@@ -5,6 +5,12 @@ working engineering loop, but the current 7B model/training line is **not yet
 complete**. Private event journals, patches, LoRA adapters, and API credentials are
 not included in this public-tree report.
 
+The consolidated handoff is now
+[PROJECT_HANDOFF_20261001.md](PROJECT_HANDOFF_20261001.md). It includes the later
+seven-task / fourth-adapter update and distinguishes the implemented optional
+full-coverage sampler from an experiment result. The snapshot below remains
+historical; the handoff adds no new model evaluation.
+
 ## Later same-day update
 
 The table and bounded local diagnostic below describe the **earlier** state,

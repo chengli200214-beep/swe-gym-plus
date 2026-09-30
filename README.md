@@ -11,17 +11,25 @@ benchmark result. The demo fixture is a deterministic integration test; real
 claims require a frozen SWE-Gym revision, a quality report for every task, and
 complete artifacts.
 
-As of 2026-09-29, the current 7B Base has produced one nonempty patch that
-passed independent tests in a frozen three-task **development** retest with
-public visible-test commands. That Agent run nevertheless exhausted its step
-budget, the other two patches did not pass, and a follow-up configuration
-returned 0/3. There is no demonstrated stable repair-rate or SFT improvement.
-The historical 20-task/250-action export fails the current typed-tool training
-alignment gate; no new aligned SFT has been started. Details and caveats are in
-[`docs/VGPU32_RETEST_20260929.md`](docs/VGPU32_RETEST_20260929.md) and
-[`docs/TRAINING_DATA_READINESS_20260928.md`](docs/TRAINING_DATA_READINESS_20260928.md).
-The latest completion matrix, including a passing but non-completed train-task
-candidate, is in [`docs/PROJECT_STATUS_20260929.md`](docs/PROJECT_STATUS_20260929.md).
+The progress handoff assembled on 2026-10-01 is in
+[`docs/PROJECT_HANDOFF_20261001.md`](docs/PROJECT_HANDOFF_20261001.md), based on
+the recorded experiments through 2026-09-29. The engineering loop is implemented;
+stable autonomous repair and a sealed SFT improvement are **not** established.
+Seven distinct, independently passed train tasks yielded 57 audited next-action
+records. Four current-protocol 7B LoRA variants were trained, initially on six
+tasks / 46 records and then on seven tasks / 57 records. Base and all four
+variants scored **0/4** on a repeatedly inspected development panel. One variant
+produced a nonempty but failing patch; this is not a successful repair.
+The optional full-coverage sampling mode is implemented, but the current public
+ledger does not contain a training or evaluation result for that mode.
+
+The detailed current-protocol experiment ledger is
+[`docs/TRAIN_ONLY_ALIGNED_SFT_20260929.md`](docs/TRAIN_ONLY_ALIGNED_SFT_20260929.md).
+The historical 20-task/250-action export failed the typed-tool alignment gate;
+it is not the source of the later aligned experiments. Earlier diagnostics are
+retained in [`docs/VGPU32_RETEST_20260929.md`](docs/VGPU32_RETEST_20260929.md),
+[`docs/TRAINING_DATA_READINESS_20260928.md`](docs/TRAINING_DATA_READINESS_20260928.md)
+and [`docs/PROJECT_STATUS_20260929.md`](docs/PROJECT_STATUS_20260929.md).
 
 ## Implemented scope
 
@@ -31,9 +39,9 @@ candidate, is in [`docs/PROJECT_STATUS_20260929.md`](docs/PROJECT_STATUS_2026092
 - P1: checkpoint/recovery decisions, cumulative token/time/cost budgets,
   no-progress detection, evidence-aware compression, independent candidates,
   rule-based selection, honest metrics, and an optional FastAPI run index.
-- P2: SFT data conversion and historical BF16 LoRA experiments with negative
-  or inconclusive evaluation results; the current typed-tool training-data
-  audit and new controlled comparison remain open.
+- P2: audited current-protocol SFT export, train-only teacher collection,
+  BF16 LoRA and action-sampling diagnostics. Current comparisons are negative;
+  broader train-task coverage and a sealed final comparison remain open.
 - P3/GRPO: formal reward interface is present, but no GRPO benchmark claim is
   made. GRPO remains a separate follow-up experiment.
 
